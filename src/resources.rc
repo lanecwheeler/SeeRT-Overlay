@@ -1,0 +1,5 @@
+// Win32 resource script — embeds the application icon.
+#include <winresrc.h>
+#include "resource.h"
+
+IDI_APP ICON "render\\assets\\monitor.ico"

@@ -1,0 +1,11 @@
+{
+  "name": "overlayv2",
+  "version": "0.1.0",
+  "dependencies": [
+    {
+      "name": "imgui",
+      "features": ["dx11-binding", "win32-binding"]
+    },
+    "nlohmann-json"
+  ]
+}

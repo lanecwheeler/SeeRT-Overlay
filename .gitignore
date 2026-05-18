@@ -1,0 +1,31 @@
+# Build output
+build/
+out/
+
+# vcpkg installed packages (regenerated from vcpkg.json on first cmake run)
+vcpkg_installed/
+
+# CMake user overrides
+CMakeUserPresets.json
+
+# VS / MSBuild artifacts
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+.vs/
+
+# Logs and temp files
+*.log
+build_out.txt
+build_temp.ps1
+diagnose.ps1
+fix_defender.ps1
+kill.ps1
+kill_and_build.ps1
+
+# Session notes
+RESUME.md
+
+# Compiled shader objects (built from src/render/shaders/)
+*.cso
