@@ -1,12 +1,37 @@
 # SeeRT Overlay
 
-It's a Saturday afternoon, and you have the hankering to play a classic game from your childhood - Super Mario 64! You boot up the game on your PC and notice the characters look a little too "angular" for your nostalgia causing the experience lack some of the character from days gone by. Wouldn't it be nice to view retro media in the format it was designed to be played/viewed in? Wouldn't it be nice to make your very nice 4k monitor wildly antiquated? Well me too! Enter - SeeRT!
+It's a Saturday afternoon, and you have the hankering to play a classic game from your childhood - Super Mario 64! You boot up the game on your PC and notice the characters look a little too "angular" for your nostalgia causing the experience lack some of the character from days gone by.
+
+Wouldn't it be nice to view retro media in the format it was designed to be played/viewed in? Wouldn't it be nice to make your very nice 4k monitor wildly antiquated? Wouldn't it be nice for you monitor to still have scanlines and static to further distort your view? 
+
+Well me too! Enter - SeeRT!
 
 ## A short forward...
 I've been in my "better practice an agentic workflow within development to stay up with the times" arc, so this project was prompted probably 90% using Claude, me only tweaking a few things here and there and running a few commands when Claude seemed to get stuck.
 
 ## What is it?
 A Windows CRT monitor overlay that applies a real-time shader filter over any window or monitor. The filter runs in a transparent, click-through DirectComposition overlay — the target application sees no performance impact and requires no modification.
+
+
+<table>
+  <tr>
+    <td align="center"><b>Before</b></td>
+    <td align="center"><b>After</b></td>
+  </tr>
+  <tr>
+    <td><img src="./ExampleImages/MenuBefore.png" width="400" alt="Before"></td>
+    <td><img src="./ExampleImages/MenuAfter.png" width="400" alt="After"></td>
+  </tr>
+  <tr>
+    <td><img src="./ExampleImages/GameBefore.png" width="400" alt="Before"></td>
+    <td><img src="./ExampleImages/GameAfter.png" width="400" alt="After"></td>
+  </tr>
+</table>
+
+(P.S. I didn't want to boot my emulator for this, but thanks to "packattack04082"
+on youtube for the gameplay I got my screenshots from!)
+
+
 
 ## Features
 
