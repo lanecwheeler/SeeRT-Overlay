@@ -1,6 +1,6 @@
 # SeeRT Overlay
 
-It's a Saturday afternoon, and you have the hankering to play a classic game from your childhood - Super Mario 64! You boot up the game on your PC and notice the characters look a little too "angular" for your nostalgia causing the experience lack some of the character from days gone by.
+It's a Saturday afternoon, and you have the hankering to play a classic game from your childhood - Super Mario 64! You boot up the game on your PC and notice the characters look a little too "angular" for your nostalgia causing the experience lack some of the character from days gone by. No problem, I'll just switch on some classic anime instead! Oh, well the colors aren't as vibrant and it's missing that "glow"... 
 
 Wouldn't it be nice to view retro media in the format it was designed to be played/viewed in? Wouldn't it be nice to make your very nice 4k monitor wildly antiquated? Wouldn't it be nice for you monitor to still have scanlines and static to further distort your view? 
 
@@ -25,6 +25,14 @@ A Windows CRT monitor overlay that applies a real-time shader filter over any wi
   <tr>
     <td><img src="./ExampleImages/GameBefore.png" width="400" alt="Before"></td>
     <td><img src="./ExampleImages/GameAfter.png" width="400" alt="After"></td>
+  </tr>
+  <tr>
+    <td><img src="./ExampleImages/PokemonBefore.png" width="400" alt="Before"></td>
+    <td><img src="./ExampleImages/PokemonAfter.png" width="400" alt="After"></td>
+  </tr>
+  <tr>
+    <td><img src="./ExampleImages/HunterXHunterBefore.png" width="400" alt="Before"></td>
+    <td><img src="./ExampleImages/HunterXHunterAfter.png" width="400" alt="After"></td>
   </tr>
 </table>
 
