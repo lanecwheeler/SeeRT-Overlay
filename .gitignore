@@ -17,15 +17,6 @@ CMakeUserPresets.json
 
 # Logs and temp files
 *.log
-build_out.txt
-build_temp.ps1
-diagnose.ps1
-fix_defender.ps1
-kill.ps1
-kill_and_build.ps1
-
-# Session notes
-RESUME.md
 
 # Compiled shader objects (built from src/render/shaders/)
 *.cso
