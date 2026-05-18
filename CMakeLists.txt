@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(OverlayV2 VERSION 0.1.0 LANGUAGES CXX)
+project(SeeRTOverlay VERSION 0.1.0 LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------
 # Standards
@@ -12,7 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Windows-only guard
 # ---------------------------------------------------------------------------
 if (NOT WIN32)
-    message(FATAL_ERROR "OverlayV2 is Windows-only.")
+    message(FATAL_ERROR "SeeRT Overlay is Windows-only.")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -52,7 +52,7 @@ set(SOURCES
     src/resources.rc
 )
 
-add_executable(OverlayV2 WIN32 ${SOURCES})
+add_executable(SeeRTOverlay WIN32 ${SOURCES})
 
 # ---------------------------------------------------------------------------
 # Windows SDK include paths for WinRT / C++/WinRT headers
@@ -83,7 +83,7 @@ message(STATUS "Windows SDK dir:     ${WIN_SDK_DIR}")
 message(STATUS "Windows SDK version: ${WIN_SDK_VERSION}")
 
 # C++/WinRT projection headers live under Include/<version>/cppwinrt.
-target_include_directories(OverlayV2 PRIVATE
+target_include_directories(SeeRTOverlay PRIVATE
     "${WIN_SDK_DIR}/Include/${WIN_SDK_VERSION}/cppwinrt"
     "${WIN_SDK_DIR}/Include/${WIN_SDK_VERSION}/um"
     "${WIN_SDK_DIR}/Include/${WIN_SDK_VERSION}/shared"
@@ -93,7 +93,7 @@ target_include_directories(OverlayV2 PRIVATE
 # ---------------------------------------------------------------------------
 # Compiler options
 # ---------------------------------------------------------------------------
-target_compile_options(OverlayV2 PRIVATE
+target_compile_options(SeeRTOverlay PRIVATE
     /W4             # High warning level
     /WX-            # Warnings are NOT errors (WinRT headers emit some)
     /EHsc           # Standard C++ exception handling
@@ -107,7 +107,7 @@ target_compile_options(OverlayV2 PRIVATE
 )
 
 # Suppress the "windows.h included before winrt" warning that some SDK versions emit.
-target_compile_definitions(OverlayV2 PRIVATE
+target_compile_definitions(SeeRTOverlay PRIVATE
     WIN32_LEAN_AND_MEAN
     NOMINMAX
     _WIN32_WINNT=0x0A00   # Windows 10
@@ -119,7 +119,7 @@ target_compile_definitions(OverlayV2 PRIVATE
 # (D3D11 / DXGI / d3dcompiler are also #pragma comment(lib,...) in the .cpp
 #  files, but explicit link here makes CMake-generated project files correct.)
 # ---------------------------------------------------------------------------
-target_link_libraries(OverlayV2 PRIVATE
+target_link_libraries(SeeRTOverlay PRIVATE
     imgui::imgui
     nlohmann_json::nlohmann_json
     d3d11
@@ -204,21 +204,21 @@ add_custom_command(
 )
 
 # Custom target that the main executable depends on.
-add_custom_target(OverlayV2_Shaders ALL
+add_custom_target(SeeRTOverlay_Shaders ALL
     DEPENDS "${VS_CSO}" "${PS_CSO}" "${BLIT_PS_CSO}" "${SPRITE_VS_CSO}"
 )
-add_dependencies(OverlayV2 OverlayV2_Shaders)
+add_dependencies(SeeRTOverlay SeeRTOverlay_Shaders)
 
 # Copy compiled shaders next to the executable after build.
-add_custom_command(TARGET OverlayV2 POST_BUILD
+add_custom_command(TARGET SeeRTOverlay POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${VS_CSO}"        "$<TARGET_FILE_DIR:OverlayV2>/crt_vs.cso"
+        "${VS_CSO}"        "$<TARGET_FILE_DIR:SeeRTOverlay>/crt_vs.cso"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${PS_CSO}"        "$<TARGET_FILE_DIR:OverlayV2>/crt_ps.cso"
+        "${PS_CSO}"        "$<TARGET_FILE_DIR:SeeRTOverlay>/crt_ps.cso"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${BLIT_PS_CSO}"   "$<TARGET_FILE_DIR:OverlayV2>/crt_blit_ps.cso"
+        "${BLIT_PS_CSO}"   "$<TARGET_FILE_DIR:SeeRTOverlay>/crt_blit_ps.cso"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${SPRITE_VS_CSO}" "$<TARGET_FILE_DIR:OverlayV2>/sprite_vs.cso"
+        "${SPRITE_VS_CSO}" "$<TARGET_FILE_DIR:SeeRTOverlay>/sprite_vs.cso"
     COMMENT "Copying shader .cso files to output directory"
 )
 
@@ -228,10 +228,10 @@ add_custom_command(TARGET OverlayV2 POST_BUILD
 set(CURSOR_SRC
     "${CMAKE_CURRENT_SOURCE_DIR}/../CRT Monitor Overlay Filter/src/renderer/assets/cursors/cooler arrow.png")
 if (EXISTS "${CURSOR_SRC}")
-    add_custom_command(TARGET OverlayV2 POST_BUILD
+    add_custom_command(TARGET SeeRTOverlay POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CURSOR_SRC}"
-            "$<TARGET_FILE_DIR:OverlayV2>/cursor.png"
+            "$<TARGET_FILE_DIR:SeeRTOverlay>/cursor.png"
         COMMENT "Copying cursor asset")
 else()
     message(WARNING "Cursor asset not found at: ${CURSOR_SRC}")
@@ -240,19 +240,19 @@ endif()
 # ---------------------------------------------------------------------------
 # Font assets — copy TTFs next to the exe so they can be loaded at runtime.
 # ---------------------------------------------------------------------------
-add_custom_command(TARGET OverlayV2 POST_BUILD
+add_custom_command(TARGET SeeRTOverlay POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/src/render/assets/CherryBombOne-Regular.ttf"
-        "$<TARGET_FILE_DIR:OverlayV2>/CherryBombOne-Regular.ttf"
+        "$<TARGET_FILE_DIR:SeeRTOverlay>/CherryBombOne-Regular.ttf"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/src/render/assets/ChakraPetch-Regular.ttf"
-        "$<TARGET_FILE_DIR:OverlayV2>/ChakraPetch-Regular.ttf"
+        "$<TARGET_FILE_DIR:SeeRTOverlay>/ChakraPetch-Regular.ttf"
     COMMENT "Copying font assets"
 )
 
 # ---------------------------------------------------------------------------
 # Output directory conventions
 # ---------------------------------------------------------------------------
-set_target_properties(OverlayV2 PROPERTIES
+set_target_properties(SeeRTOverlay PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )

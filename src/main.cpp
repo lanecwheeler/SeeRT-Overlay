@@ -161,7 +161,7 @@ static void RegisterWindowClasses(HINSTANCE hInstance) {
     wc.lpfnWndProc   = WndProc;
     wc.hInstance     = hInstance;
     wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
-    wc.lpszClassName = L"OverlayV2_Output";
+    wc.lpszClassName = L"SeeRTOverlay_Output";
     RegisterClassExW(&wc);
 
     // Secondary per-monitor overlay windows
@@ -170,7 +170,7 @@ static void RegisterWindowClasses(HINSTANCE hInstance) {
     ws2.style         = CS_HREDRAW | CS_VREDRAW;
     ws2.lpfnWndProc   = SecondaryWndProc;
     ws2.hInstance     = hInstance;
-    ws2.lpszClassName = L"OverlayV2_Secondary";
+    ws2.lpszClassName = L"SeeRTOverlay_Secondary";
     RegisterClassExW(&ws2);
 
     // Optional stream output window
@@ -181,7 +181,7 @@ static void RegisterWindowClasses(HINSTANCE hInstance) {
     ws.hInstance     = hInstance;
     ws.hCursor       = LoadCursor(nullptr, IDC_ARROW);
     ws.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
-    ws.lpszClassName = L"OverlayV2_Stream";
+    ws.lpszClassName = L"SeeRTOverlay_Stream";
     RegisterClassExW(&ws);
 }
 
@@ -207,8 +207,8 @@ static HWND CreateOutputWindow(HINSTANCE hInstance) {
 
     HWND hwnd = CreateWindowExW(
         exStyle,
-        L"OverlayV2_Output",
-        L"OverlayV2 \u2014 CRT Overlay",
+        L"SeeRTOverlay_Output",
+        L"SeeRT Overlay",
         style,
         0, 0, screenW, screenH,
         nullptr, nullptr, hInstance, nullptr);
@@ -226,7 +226,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int /*nCmdShow*/) {
 
     HWND hwnd = CreateOutputWindow(hInstance);
     if (!hwnd) {
-        MessageBoxW(nullptr, L"Failed to create output window.", L"OverlayV2", MB_OK | MB_ICONERROR);
+        MessageBoxW(nullptr, L"Failed to create output window.", L"SeeRT Overlay", MB_OK | MB_ICONERROR);
         return 1;
     }
 
@@ -251,7 +251,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int /*nCmdShow*/) {
         MessageBoxW(nullptr,
                     L"Failed to initialise Direct3D / WGC.\n"
                     L"Ensure you are running Windows 10 1803 or later.",
-                    L"OverlayV2", MB_OK | MB_ICONERROR);
+                    L"SeeRT Overlay", MB_OK | MB_ICONERROR);
         g_app = nullptr;
         return 1;
     }

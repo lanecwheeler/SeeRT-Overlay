@@ -13,7 +13,7 @@
 using Microsoft::WRL::ComPtr;
 
 // ---------------------------------------------------------------------------
-// Simple file logger — writes to %TEMP%\OverlayV2_Audio.log
+// Simple file logger — writes to %TEMP%\SeeRTOverlay_Audio.log
 // ---------------------------------------------------------------------------
 static FILE* s_log = nullptr;
 
@@ -21,7 +21,7 @@ static void LogOpen() {
     wchar_t tmp[MAX_PATH];
     GetTempPathW(MAX_PATH, tmp);
     wchar_t path[MAX_PATH];
-    swprintf_s(path, L"%sOverlayV2_Audio.log", tmp);
+    swprintf_s(path, L"%sSeeRTOverlay_Audio.log", tmp);
     _wfopen_s(&s_log, path, L"w");
 }
 

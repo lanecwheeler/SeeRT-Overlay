@@ -868,7 +868,7 @@ void App::AddMonitorOverlay(HMONITOR hmon) {
 
     HWND hwnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT,
-        L"OverlayV2_Secondary", L"OverlayV2",
+        L"SeeRTOverlay_Secondary", L"SeeRT Overlay",
         WS_POPUP | WS_VISIBLE,
         r.left, r.top, r.right - r.left, r.bottom - r.top,
         nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
@@ -1515,7 +1515,7 @@ void App::OpenStreamWindow() {
 
     m_streamHwnd = CreateWindowExW(
         0,
-        L"OverlayV2_Stream",
+        L"SeeRTOverlay_Stream",
         L"CRT Overlay \u2014 Stream Output",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         CW_USEDEFAULT, CW_USEDEFAULT, 1280, 720,

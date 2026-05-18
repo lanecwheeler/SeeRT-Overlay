@@ -367,7 +367,7 @@ const std::vector<Presets::BuiltInPreset>& Presets::GetBuiltIn() {
 }
 
 // ---------------------------------------------------------------------------
-// DefaultPath — %APPDATA%\OverlayV2\presets.json
+// DefaultPath — %APPDATA%\SeeRT Overlay\presets.json
 // ---------------------------------------------------------------------------
 std::string Presets::DefaultPath() {
     std::string settingsPath = Settings::DefaultPath();

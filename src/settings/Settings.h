@@ -66,7 +66,7 @@ struct CRTSettings {
 };
 
 namespace Settings {
-    // Returns the default %APPDATA%\OverlayV2\settings.json path.
+    // Returns the default %APPDATA%\SeeRT Overlay\settings.json path.
     std::string DefaultPath();
 
     // Loads settings from JSON at path. Returns defaults if the file does not exist.

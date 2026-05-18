@@ -1,4 +1,4 @@
-# OverlayV2
+# SeeRT Overlay
 
 A Windows CRT monitor overlay that applies a real-time shader filter over any window or monitor. The filter runs in a transparent, click-through DirectComposition overlay — the target application sees no performance impact and requires no modification.
 
@@ -25,7 +25,7 @@ A Windows CRT monitor overlay that applies a real-time shader filter over any wi
 **Settings**
 - ImGui settings panel with multiple UI themes
 - 11 built-in presets + save/load/reorder user presets
-- Settings persist to `%APPDATA%\OverlayV2\settings.json`
+- Settings persist to `%APPDATA%\SeeRT Overlay\settings.json`
 - Audio loopback capture (optional)
 
 ## Built-in Presets
@@ -63,7 +63,7 @@ A Windows CRT monitor overlay that applies a real-time shader filter over any wi
    cmake --build --preset default
    ```
 
-4. The executable is at `build/bin/Release/OverlayV2.exe`. Shader `.cso` files and font assets are copied next to it automatically.
+4. The executable is at `build/bin/Release/SeeRT Overlay.exe`. Shader `.cso` files and font assets are copied next to it automatically.
 
 Dependencies (`imgui`, `nlohmann-json`) are installed automatically from `vcpkg.json` during the configure step — no manual `vcpkg install` needed.
 

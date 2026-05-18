@@ -24,7 +24,7 @@ std::string DefaultPath() {
         int len = WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), -1, nullptr, 0, nullptr, nullptr);
         std::string utf8(len > 0 ? len - 1 : 0, '\0');
         WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), -1, utf8.data(), len, nullptr, nullptr);
-        return utf8 + "\\OverlayV2\\settings.json";
+        return utf8 + "\\SeeRT Overlay\\settings.json";
     }
     return "settings.json"; // fallback to cwd
 }
