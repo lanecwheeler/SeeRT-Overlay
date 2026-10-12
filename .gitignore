@@ -20,3 +20,8 @@ CMakeUserPresets.json
 
 # Compiled shader objects (built from src/render/shaders/)
 *.cso
+
+# AI assistant local files
+.claude/
+CLAUDE.md
+CLAUDE.local.md
