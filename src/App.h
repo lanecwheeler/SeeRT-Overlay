@@ -148,8 +148,9 @@ private:
     bool CanDrawSecondaryCursor() const { return m_cursorSRV && !m_settings.cursorPlain; }
 
     // Shake-to-show state.
-    POINT m_lastMousePt      = {};   // previous frame mouse position
-    float m_shakeAccum       = 0.f; // decaying speed accumulator (px/frame units)
+    POINT m_lastMousePt      = {};   // previous frame mouse position (screen coords)
+    bool  m_haveLastMousePt  = false; // false until the first sample after launch/resume
+    float m_shakeAccum       = 0.f; // decaying speed accumulator (px per 60 Hz frame units)
     float m_cursorShowTimer  = 0.f; // seconds remaining to show cursor/button after shake
     float m_prevTime         = 0.f; // previous m_settings.time, for dt
     bool  m_shakeInteractive = false; // overlay made non-transparent for shake button

@@ -847,6 +847,10 @@ void App::OnTrayNotify(WPARAM /*wParam*/, LPARAM lParam) {
                 SystemParametersInfo(SPI_SETCURSORS, 0, nullptr, 0);
                 m_cursorHidden = false;
             }
+        } else {
+            // The mouse moved freely while paused — don't read that as a shake.
+            m_haveLastMousePt = false;
+            m_shakeAccum      = 0.f;
         }
         // On resume, Tick()'s per-frame cursor check re-hides on the next frame.
     } else if (cmd == TrayIcon::CMD_MOUSE) {
@@ -1381,15 +1385,28 @@ void App::BeginImGuiFrame() {
         // Shake-to-show cursor detection.
         // -----------------------------------------------------------------------
         {
-            const float dx   = static_cast<float>(pt.x - m_lastMousePt.x);
-            const float dy   = static_cast<float>(pt.y - m_lastMousePt.y);
-            m_lastMousePt    = pt;
-            m_shakeAccum     = m_shakeAccum * 0.72f + sqrtf(dx*dx + dy*dy);
-
-            const float dt   = m_settings.time - m_prevTime;
+            // Clamp so a long stall (or resuming from pause) can't produce a
+            // huge step.
+            const float dt   = std::clamp(m_settings.time - m_prevTime, 0.f, 0.25f);
             m_prevTime       = m_settings.time;
             if (m_cursorShowTimer > 0.f)
                 m_cursorShowTimer -= dt;
+
+            // Decaying speed accumulator.  Tuned at 60 Hz as "×0.72 per frame,
+            // plus this frame's distance"; the decay and the per-frame distance
+            // are both scaled by dt so a given mouse speed produces the same
+            // value at any refresh rate (identical to the original at 60 Hz).
+            // Screen coordinates, so moving the overlay never looks like a shake.
+            // The first sample (launch, or after a pause) only seeds the position.
+            if (m_haveLastMousePt && dt > 0.f) {
+                const float dx    = static_cast<float>(screenPt.x - m_lastMousePt.x);
+                const float dy    = static_cast<float>(screenPt.y - m_lastMousePt.y);
+                const float decay = powf(0.72f, dt * 60.f);
+                const float norm  = (1.f - decay) / (0.28f * 60.f * dt);
+                m_shakeAccum      = m_shakeAccum * decay + sqrtf(dx*dx + dy*dy) * norm;
+            }
+            m_lastMousePt     = screenPt;
+            m_haveLastMousePt = true;
 
             constexpr float kThreshold    = 420.f;
             constexpr float kShowDuration =   2.5f;
