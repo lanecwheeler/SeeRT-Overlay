@@ -155,9 +155,25 @@ static bool DrawPresetsUI(const std::vector<PresetItem>& presets,
         ImGui::SetNextItemWidth(-1.f);
         const bool commit = ImGui::InputText("##newprename", s_nameBuf, sizeof(s_nameBuf),
                                               ImGuiInputTextFlags_EnterReturnsTrue);
+
+        // Built-in names are reserved — a user preset with one would be shadowed
+        // by the built-in and become unreachable.  Re-using a user preset's
+        // name is allowed and overwrites it.
+        const bool clashesBuiltIn = Presets::IsBuiltIn(s_nameBuf);
+        const bool overwrites = std::any_of(presets.begin(), presets.end(),
+            [](const PresetItem& p) { return !p.isBuiltIn && p.name == s_nameBuf; });
+        if (clashesBuiltIn)
+            ImGui::TextColored(kRedA, "A built-in preset already uses this name.");
+        else if (overwrites)
+            ImGui::TextColored(kDim, "This will overwrite your existing preset.");
+        const bool canSave = s_nameBuf[0] != '\0' && !clashesBuiltIn;
+
         ImGui::Spacing();
         const float hw = (ImGui::GetContentRegionAvail().x - spacing) * 0.5f;
-        const bool doSave   = (commit || ImGui::Button("Save",   ImVec2(hw,   0.f))) && s_nameBuf[0] != '\0';
+        if (!canSave) ImGui::BeginDisabled();
+        const bool saveClicked = ImGui::Button("Save", ImVec2(hw, 0.f));
+        if (!canSave) ImGui::EndDisabled();
+        const bool doSave   = (commit || saveClicked) && canSave;
         ImGui::SameLine();
         const bool doCancel = ImGui::Button("Cancel", ImVec2(-1.f, 0.f));
         if (doSave) {
@@ -221,8 +237,18 @@ static void DrawManageModal(const std::vector<PresetItem>& presets,
             ImGui::SetNextItemWidth(180.f);
             const bool commit = ImGui::InputText("##rn", s_renameBuf, sizeof(s_renameBuf),
                                                   ImGuiInputTextFlags_EnterReturnsTrue);
+            // Names must stay unique across built-in and user presets, or the
+            // renamed preset gets shadowed and can't be reached any more.
+            bool nameTaken = false;
+            for (int j = 0; j < (int)presets.size(); j++)
+                if (j != i && presets[j].name == s_renameBuf) { nameTaken = true; break; }
+            const bool canRename = s_renameBuf[0] != '\0' && !nameTaken;
+
             ImGui::SameLine();
-            if ((commit || ImGui::SmallButton("OK")) && s_renameBuf[0] != '\0') {
+            if (!canRename) ImGui::BeginDisabled();
+            const bool okClicked = ImGui::SmallButton("OK");
+            if (!canRename) ImGui::EndDisabled();
+            if ((commit || okClicked) && canRename) {
                 result.manageOp   = ManageOp::Rename;
                 result.manageIdx  = i;
                 result.manageName = s_renameBuf;
@@ -230,6 +256,10 @@ static void DrawManageModal(const std::vector<PresetItem>& presets,
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Cancel")) s_renameIdx = -1;
+            if (nameTaken) {
+                ImGui::SameLine();
+                ImGui::TextColored(kRedA, "name taken");
+            }
         } else {
             if (p.isBuiltIn)
                 ImGui::TextDisabled("%s  [built-in]", p.name.c_str());

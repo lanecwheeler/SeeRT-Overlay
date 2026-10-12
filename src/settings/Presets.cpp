@@ -1,6 +1,7 @@
 #include "Presets.h"
 
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <fstream>
 #include <filesystem>
 #include <unordered_map>
@@ -443,6 +444,29 @@ void Presets::Load(const fs::path& path,
             }
         }
     } catch (...) {}
+
+    // Older versions let a user preset take a built-in's name (or another user
+    // preset's), which left it shadowed and unreachable.  Give any such preset
+    // a unique "Name (n)" so it shows up again, and tidy the order list.
+    std::unordered_set<std::string> taken;
+    for (const auto& bi : GetBuiltIn()) taken.insert(bi.name);
+    for (auto& p : outPresets) {
+        if (taken.count(p.name)) {
+            const std::string base = p.name;
+            for (int n = 2; taken.count(p.name); n++)
+                p.name = base + " (" + std::to_string(n) + ")";
+        }
+        taken.insert(p.name);
+    }
+
+    std::unordered_set<std::string> seen;
+    outOrder.erase(std::remove_if(outOrder.begin(), outOrder.end(),
+        [&](const std::string& n) { return !seen.insert(n).second; }), outOrder.end());
+    // A renamed preset isn't in the saved order yet — append it so it can be
+    // reordered.  (An empty order means the caller falls back to DefaultOrder.)
+    if (!outOrder.empty())
+        for (const auto& p : outPresets)
+            if (!seen.count(p.name)) outOrder.push_back(p.name);
 }
 
 // ---------------------------------------------------------------------------

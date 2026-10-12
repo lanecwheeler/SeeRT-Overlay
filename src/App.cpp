@@ -1066,7 +1066,9 @@ void App::Tick() {
                 Presets::Apply(m_settings, result.presetSettings);
 
             // Preset: save current settings as a named preset (update existing if name matches).
-            if (result.savePreset && !result.savePresetName.empty()) {
+            // Built-in names are reserved — the built-in would shadow the user preset.
+            if (result.savePreset && !result.savePresetName.empty()
+                    && !Presets::IsBuiltIn(result.savePresetName)) {
                 auto it = std::find_if(m_userPresets.begin(), m_userPresets.end(),
                     [&](const UserPreset& p) { return p.name == result.savePresetName; });
                 if (it != m_userPresets.end()) {
@@ -1113,7 +1115,10 @@ void App::Tick() {
 
                 } else if (result.manageOp == ManageOp::Rename
                            && !m_orderedPresets[result.manageIdx].isBuiltIn
-                           && !result.manageName.empty()) {
+                           && !result.manageName.empty()
+                           && result.manageName != opName
+                           && std::none_of(m_orderedPresets.begin(), m_orderedPresets.end(),
+                                  [&](const PresetItem& p) { return p.name == result.manageName; })) {
                     // Rename in user presets and order.
                     for (auto& p : m_userPresets)
                         if (p.name == opName) { p.name = result.manageName; break; }
