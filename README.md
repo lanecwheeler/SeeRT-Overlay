@@ -94,7 +94,7 @@ on youtube for the gameplay I got my screenshots from!)
 
 1. Clone the repo and open a terminal in the project root.
 
-2. If vcpkg is not at `C:/vcpkg`, edit `CMakePresets.json` and update `toolchainFile` to point to your vcpkg installation.
+2. If vcpkg is not at `C:/vcpkg`, edit `CMakePresets.json` and update `toolchainFile` to point to your vcpkg installation. The preset uses the newest Visual Studio generator CMake can find.
 
 3. Configure and build:
    ```bash
@@ -102,7 +102,7 @@ on youtube for the gameplay I got my screenshots from!)
    cmake --build --preset default
    ```
 
-4. The executable is at `build/bin/Release/SeeRT Overlay.exe`. Shader `.cso` files and font assets are copied next to it automatically.
+4. The executable is at `build/bin/Release/SeeRTOverlay.exe`. Shader `.cso` files, font assets, and the default cursor image are copied next to it automatically.
 
 Dependencies (`imgui`, `nlohmann-json`) are installed automatically from `vcpkg.json` during the configure step — no manual `vcpkg install` needed.
 

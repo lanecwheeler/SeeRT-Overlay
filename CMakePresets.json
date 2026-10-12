@@ -4,7 +4,6 @@
         {
             "name": "default",
             "displayName": "x64 Release (vcpkg)",
-            "generator": "Visual Studio 18 2026",
             "architecture": "x64",
             "binaryDir": "${sourceDir}/build",
             "toolchainFile": "C:/vcpkg/scripts/buildsystems/vcpkg.cmake",
