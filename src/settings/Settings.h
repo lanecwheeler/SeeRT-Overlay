@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <nlohmann/json_fwd.hpp>
 
 // CRTSettings is the single source-of-truth for all shader + post-process parameters.
 // Packed to 16-byte boundary to match the HLSL constant buffer layout exactly.
@@ -74,4 +75,10 @@ namespace Settings {
 
     // Serialises settings to JSON at path. Creates parent directories if needed.
     void Save(const std::string& path, const CRTSettings& s);
+
+    // Read/write the visual (shader + cursor) fields — the set a preset
+    // captures.  Shared by settings.json and presets.json so the field lists
+    // can never drift apart.  Missing or mistyped keys leave the field as-is.
+    void VisualToJson(const CRTSettings& s, nlohmann::json& j);
+    void VisualFromJson(const nlohmann::json& j, CRTSettings& s);
 }

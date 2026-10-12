@@ -20,42 +20,11 @@ namespace fs = std::filesystem;
 // preset is applied.
 // ---------------------------------------------------------------------------
 void Presets::Apply(CRTSettings& dst, const CRTSettings& src) {
-    // Shader fields
-    dst.curvatureX        = src.curvatureX;
-    dst.curvatureY        = src.curvatureY;
-    dst.zoom              = src.zoom;
-    dst.scanlineIntensity = src.scanlineIntensity;
-    dst.scanlineCount     = src.scanlineCount;
-    dst.vignetteStrength  = src.vignetteStrength;
-    dst.glowStrength      = src.glowStrength;
-    dst.brightness        = src.brightness;
-    dst.contrast          = src.contrast;
-    dst.saturation        = src.saturation;
-    dst.flickerIntensity  = src.flickerIntensity;
-    dst.flickerSpeed      = src.flickerSpeed;
-    dst.flickerRandomness = src.flickerRandomness;
-    dst.humBarIntensity   = src.humBarIntensity;
-    dst.humBarSpeed       = src.humBarSpeed;
-    dst.diffuseStrength   = src.diffuseStrength;
-    dst.diffuseThreshold  = src.diffuseThreshold;
-    dst.phosphorR             = src.phosphorR;
-    dst.phosphorG             = src.phosphorG;
-    dst.phosphorB             = src.phosphorB;
-    dst.staticIntensity       = src.staticIntensity;
-    dst.staticSpeed           = src.staticSpeed;
-    dst.shadowMaskIntensity   = src.shadowMaskIntensity;
-    dst.shadowMaskScale       = src.shadowMaskScale;
-    dst.shadowMaskType        = src.shadowMaskType;
-    dst.convergence           = src.convergence;
-    // Cursor fields
-    dst.cursorScale       = src.cursorScale;
-    dst.cursorThickness   = src.cursorThickness;
-    dst.cursorR           = src.cursorR;
-    dst.cursorG           = src.cursorG;
-    dst.cursorB           = src.cursorB;
-    dst.cursorAutoHide    = src.cursorAutoHide;
-    dst.cursorStroke      = src.cursorStroke;
-    dst.cursorPlain       = src.cursorPlain;
+    // Round-trip through the shared visual-field serializer so the set of
+    // fields a preset applies is exactly the set it saves.
+    json j;
+    Settings::VisualToJson(src, j);
+    Settings::VisualFromJson(j, dst);
     // NOT copied: time, menuStyle, menuVisible, toggleX, toggleY, hiddenSources
 }
 
@@ -381,92 +350,6 @@ std::string Presets::DefaultPath() {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: read/write the visual fields of a CRTSettings to/from a JSON object.
-// Mirrors the field list in Presets::Apply() exactly.
-// ---------------------------------------------------------------------------
-static json SettingsToJson(const CRTSettings& s) {
-    json j;
-    j["curvatureX"]        = s.curvatureX;
-    j["curvatureY"]        = s.curvatureY;
-    j["zoom"]              = s.zoom;
-    j["scanlineIntensity"] = s.scanlineIntensity;
-    j["scanlineCount"]     = s.scanlineCount;
-    j["vignetteStrength"]  = s.vignetteStrength;
-    j["glowStrength"]      = s.glowStrength;
-    j["brightness"]        = s.brightness;
-    j["contrast"]          = s.contrast;
-    j["saturation"]        = s.saturation;
-    j["flickerIntensity"]  = s.flickerIntensity;
-    j["flickerSpeed"]      = s.flickerSpeed;
-    j["flickerRandomness"] = s.flickerRandomness;
-    j["humBarIntensity"]   = s.humBarIntensity;
-    j["humBarSpeed"]       = s.humBarSpeed;
-    j["diffuseStrength"]   = s.diffuseStrength;
-    j["diffuseThreshold"]  = s.diffuseThreshold;
-    j["phosphorR"]           = s.phosphorR;
-    j["phosphorG"]           = s.phosphorG;
-    j["phosphorB"]           = s.phosphorB;
-    j["staticIntensity"]     = s.staticIntensity;
-    j["staticSpeed"]         = s.staticSpeed;
-    j["shadowMaskIntensity"] = s.shadowMaskIntensity;
-    j["shadowMaskScale"]     = s.shadowMaskScale;
-    j["shadowMaskType"]      = s.shadowMaskType;
-    j["convergence"]         = s.convergence;
-    j["cursorScale"]         = s.cursorScale;
-    j["cursorThickness"]   = s.cursorThickness;
-    j["cursorR"]           = s.cursorR;
-    j["cursorG"]           = s.cursorG;
-    j["cursorB"]           = s.cursorB;
-    j["cursorAutoHide"]    = s.cursorAutoHide;
-    j["cursorStroke"]      = s.cursorStroke;
-    j["cursorPlain"]       = s.cursorPlain;
-    return j;
-}
-
-static void JsonToSettings(const json& j, CRTSettings& s) {
-    auto getF = [&](const char* key, float& field) {
-        if (j.contains(key)) field = j[key].get<float>();
-    };
-    auto getB = [&](const char* key, bool& field) {
-        if (j.contains(key)) field = j[key].get<bool>();
-    };
-    getF("curvatureX",        s.curvatureX);
-    getF("curvatureY",        s.curvatureY);
-    getF("zoom",              s.zoom);
-    getF("scanlineIntensity", s.scanlineIntensity);
-    getF("scanlineCount",     s.scanlineCount);
-    getF("vignetteStrength",  s.vignetteStrength);
-    getF("glowStrength",      s.glowStrength);
-    getF("brightness",        s.brightness);
-    getF("contrast",          s.contrast);
-    getF("saturation",        s.saturation);
-    getF("flickerIntensity",  s.flickerIntensity);
-    getF("flickerSpeed",      s.flickerSpeed);
-    getF("flickerRandomness", s.flickerRandomness);
-    getF("humBarIntensity",   s.humBarIntensity);
-    getF("humBarSpeed",       s.humBarSpeed);
-    getF("diffuseStrength",   s.diffuseStrength);
-    getF("diffuseThreshold",  s.diffuseThreshold);
-    getF("phosphorR",           s.phosphorR);
-    getF("phosphorG",           s.phosphorG);
-    getF("phosphorB",           s.phosphorB);
-    getF("staticIntensity",     s.staticIntensity);
-    getF("staticSpeed",         s.staticSpeed);
-    getF("shadowMaskIntensity", s.shadowMaskIntensity);
-    getF("shadowMaskScale",     s.shadowMaskScale);
-    getF("shadowMaskType",      s.shadowMaskType);
-    getF("convergence",         s.convergence);
-    getF("cursorScale",         s.cursorScale);
-    getF("cursorThickness",   s.cursorThickness);
-    getF("cursorR",           s.cursorR);
-    getF("cursorG",           s.cursorG);
-    getF("cursorB",           s.cursorB);
-    getB("cursorAutoHide",    s.cursorAutoHide);
-    getB("cursorStroke",      s.cursorStroke);
-    getB("cursorPlain",       s.cursorPlain);
-}
-
-// ---------------------------------------------------------------------------
 // IsBuiltIn — true if name matches any factory preset.
 // ---------------------------------------------------------------------------
 bool Presets::IsBuiltIn(const std::string& name) {
@@ -548,7 +431,7 @@ void Presets::Load(const std::string& path,
                 if (!elem.contains("name") || !elem["name"].is_string()) continue;
                 UserPreset p;
                 p.name = elem["name"].get<std::string>();
-                JsonToSettings(elem, p.settings);
+                Settings::VisualFromJson(elem, p.settings);
                 outPresets.push_back(std::move(p));
             }
         } else if (root.is_object()) {
@@ -557,7 +440,7 @@ void Presets::Load(const std::string& path,
                     if (!elem.contains("name") || !elem["name"].is_string()) continue;
                     UserPreset p;
                     p.name = elem["name"].get<std::string>();
-                    JsonToSettings(elem, p.settings);
+                    Settings::VisualFromJson(elem, p.settings);
                     outPresets.push_back(std::move(p));
                 }
             }
@@ -583,7 +466,8 @@ void Presets::Save(const std::string& path,
 
         json presetArr = json::array();
         for (const auto& preset : presets) {
-            json elem = SettingsToJson(preset.settings);
+            json elem;
+            Settings::VisualToJson(preset.settings, elem);
             elem["name"] = preset.name;
             presetArr.push_back(std::move(elem));
         }

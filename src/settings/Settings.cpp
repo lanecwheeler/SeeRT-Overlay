@@ -29,6 +29,90 @@ std::string DefaultPath() {
     return "settings.json"; // fallback to cwd
 }
 
+void VisualToJson(const CRTSettings& s, json& j) {
+    j["curvatureX"]          = s.curvatureX;
+    j["curvatureY"]          = s.curvatureY;
+    j["zoom"]                = s.zoom;
+    j["scanlineIntensity"]   = s.scanlineIntensity;
+    j["scanlineCount"]       = s.scanlineCount;
+    j["vignetteStrength"]    = s.vignetteStrength;
+    j["glowStrength"]        = s.glowStrength;
+    j["brightness"]          = s.brightness;
+    j["contrast"]            = s.contrast;
+    j["saturation"]          = s.saturation;
+    j["flickerIntensity"]    = s.flickerIntensity;
+    j["flickerSpeed"]        = s.flickerSpeed;
+    j["flickerRandomness"]   = s.flickerRandomness;
+    j["humBarIntensity"]     = s.humBarIntensity;
+    j["humBarSpeed"]         = s.humBarSpeed;
+    j["humBarFrequency"]     = s.humBarFrequency;
+    j["diffuseStrength"]     = s.diffuseStrength;
+    j["diffuseThreshold"]    = s.diffuseThreshold;
+    j["phosphorR"]           = s.phosphorR;
+    j["phosphorG"]           = s.phosphorG;
+    j["phosphorB"]           = s.phosphorB;
+    j["staticIntensity"]     = s.staticIntensity;
+    j["staticSpeed"]         = s.staticSpeed;
+    j["shadowMaskIntensity"] = s.shadowMaskIntensity;
+    j["shadowMaskScale"]     = s.shadowMaskScale;
+    j["shadowMaskType"]      = s.shadowMaskType;
+    j["convergence"]         = s.convergence;
+    j["cursorScale"]         = s.cursorScale;
+    j["cursorThickness"]     = s.cursorThickness;
+    j["cursorR"]             = s.cursorR;
+    j["cursorG"]             = s.cursorG;
+    j["cursorB"]             = s.cursorB;
+    j["cursorAutoHide"]      = s.cursorAutoHide;
+    j["cursorStroke"]        = s.cursorStroke;
+    j["cursorPlain"]         = s.cursorPlain;
+}
+
+void VisualFromJson(const json& j, CRTSettings& s) {
+    auto getF = [&](const char* key, float& field) {
+        auto it = j.find(key);
+        if (it != j.end() && it->is_number()) field = it->get<float>();
+    };
+    auto getB = [&](const char* key, bool& field) {
+        auto it = j.find(key);
+        if (it != j.end() && it->is_boolean()) field = it->get<bool>();
+    };
+    getF("curvatureX",          s.curvatureX);
+    getF("curvatureY",          s.curvatureY);
+    getF("zoom",                s.zoom);
+    getF("scanlineIntensity",   s.scanlineIntensity);
+    getF("scanlineCount",       s.scanlineCount);
+    getF("vignetteStrength",    s.vignetteStrength);
+    getF("glowStrength",        s.glowStrength);
+    getF("brightness",          s.brightness);
+    getF("contrast",            s.contrast);
+    getF("saturation",          s.saturation);
+    getF("flickerIntensity",    s.flickerIntensity);
+    getF("flickerSpeed",        s.flickerSpeed);
+    getF("flickerRandomness",   s.flickerRandomness);
+    getF("humBarIntensity",     s.humBarIntensity);
+    getF("humBarSpeed",         s.humBarSpeed);
+    getF("humBarFrequency",     s.humBarFrequency);
+    getF("diffuseStrength",     s.diffuseStrength);
+    getF("diffuseThreshold",    s.diffuseThreshold);
+    getF("phosphorR",           s.phosphorR);
+    getF("phosphorG",           s.phosphorG);
+    getF("phosphorB",           s.phosphorB);
+    getF("staticIntensity",     s.staticIntensity);
+    getF("staticSpeed",         s.staticSpeed);
+    getF("shadowMaskIntensity", s.shadowMaskIntensity);
+    getF("shadowMaskScale",     s.shadowMaskScale);
+    getF("shadowMaskType",      s.shadowMaskType);
+    getF("convergence",         s.convergence);
+    getF("cursorScale",         s.cursorScale);
+    getF("cursorThickness",     s.cursorThickness);
+    getF("cursorR",             s.cursorR);
+    getF("cursorG",             s.cursorG);
+    getF("cursorB",             s.cursorB);
+    getB("cursorAutoHide",      s.cursorAutoHide);
+    getB("cursorStroke",        s.cursorStroke);
+    getB("cursorPlain",         s.cursorPlain);
+}
+
 CRTSettings Load(const std::string& path) {
     CRTSettings s; // filled with member-initializer defaults
     std::ifstream f(path);
@@ -36,51 +120,20 @@ CRTSettings Load(const std::string& path) {
 
     try {
         json j = json::parse(f);
-        if (j.contains("curvatureX"))       s.curvatureX       = j["curvatureX"].get<float>();
-        if (j.contains("curvatureY"))       s.curvatureY       = j["curvatureY"].get<float>();
-        if (j.contains("zoom"))             s.zoom             = j["zoom"].get<float>();
-        if (j.contains("scanlineIntensity"))s.scanlineIntensity= j["scanlineIntensity"].get<float>();
-        if (j.contains("scanlineCount"))    s.scanlineCount    = j["scanlineCount"].get<float>();
-        if (j.contains("vignetteStrength")) s.vignetteStrength = j["vignetteStrength"].get<float>();
-        if (j.contains("glowStrength"))     s.glowStrength     = j["glowStrength"].get<float>();
-        if (j.contains("brightness"))       s.brightness       = j["brightness"].get<float>();
-        if (j.contains("contrast"))         s.contrast         = j["contrast"].get<float>();
-        if (j.contains("saturation"))       s.saturation       = j["saturation"].get<float>();
-        if (j.contains("flickerIntensity"))  s.flickerIntensity  = j["flickerIntensity"].get<float>();
-        if (j.contains("flickerSpeed"))      s.flickerSpeed      = j["flickerSpeed"].get<float>();
-        if (j.contains("flickerRandomness")) s.flickerRandomness = j["flickerRandomness"].get<float>();
-        if (j.contains("humBarIntensity"))   s.humBarIntensity    = j["humBarIntensity"].get<float>();
-        if (j.contains("humBarSpeed"))       s.humBarSpeed        = j["humBarSpeed"].get<float>();
-        if (j.contains("humBarFrequency"))   s.humBarFrequency    = j["humBarFrequency"].get<float>();
-        if (j.contains("diffuseStrength"))  s.diffuseStrength   = j["diffuseStrength"].get<float>();
-        if (j.contains("diffuseThreshold")) s.diffuseThreshold  = j["diffuseThreshold"].get<float>();
-        if (j.contains("phosphorR"))        s.phosphorR         = j["phosphorR"].get<float>();
-        if (j.contains("phosphorG"))        s.phosphorG         = j["phosphorG"].get<float>();
-        if (j.contains("phosphorB"))        s.phosphorB         = j["phosphorB"].get<float>();
-        if (j.contains("staticIntensity"))      s.staticIntensity     = j["staticIntensity"].get<float>();
-        if (j.contains("staticSpeed"))          s.staticSpeed         = j["staticSpeed"].get<float>();
-        if (j.contains("shadowMaskIntensity"))  s.shadowMaskIntensity = j["shadowMaskIntensity"].get<float>();
-        if (j.contains("shadowMaskScale"))      s.shadowMaskScale     = j["shadowMaskScale"].get<float>();
-        if (j.contains("shadowMaskType"))       s.shadowMaskType      = j["shadowMaskType"].get<float>();
-        if (j.contains("convergence"))          s.convergence         = j["convergence"].get<float>();
-        if (j.contains("menuStyle"))        s.menuStyle        = j["menuStyle"].get<int>();
-        if (j.contains("cursorScale"))      s.cursorScale      = j["cursorScale"].get<float>();
-        if (j.contains("cursorThickness")) s.cursorThickness  = j["cursorThickness"].get<float>();
-        if (j.contains("cursorR"))          s.cursorR          = j["cursorR"].get<float>();
-        if (j.contains("cursorG"))          s.cursorG          = j["cursorG"].get<float>();
-        if (j.contains("cursorB"))          s.cursorB          = j["cursorB"].get<float>();
-        if (j.contains("cursorAutoHide"))   s.cursorAutoHide   = j["cursorAutoHide"].get<bool>();
-        if (j.contains("cursorStroke"))     s.cursorStroke     = j["cursorStroke"].get<bool>();
-        if (j.contains("cursorPlain"))      s.cursorPlain      = j["cursorPlain"].get<bool>();
+        if (!j.is_object()) return s;
+        VisualFromJson(j, s);
+        if (j.contains("menuStyle") && j["menuStyle"].is_number_integer())
+            s.menuStyle = j["menuStyle"].get<int>();
         if (j.contains("hiddenSources") && j["hiddenSources"].is_array()) {
             for (auto& item : j["hiddenSources"])
                 if (item.is_string()) s.hiddenSources.push_back(item.get<std::string>());
         }
-        if (j.contains("audioCaptureDeviceId")) s.audioCaptureDeviceId = j["audioCaptureDeviceId"].get<std::string>();
+        if (j.contains("audioCaptureDeviceId") && j["audioCaptureDeviceId"].is_string())
+            s.audioCaptureDeviceId = j["audioCaptureDeviceId"].get<std::string>();
         // menuVisible is intentionally NOT loaded — the panel always starts
         // closed so the overlay is click-through immediately on launch.
-        if (j.contains("toggleX"))          s.toggleX          = j["toggleX"].get<float>();
-        if (j.contains("toggleY"))          s.toggleY          = j["toggleY"].get<float>();
+        if (j.contains("toggleX") && j["toggleX"].is_number()) s.toggleX = j["toggleX"].get<float>();
+        if (j.contains("toggleY") && j["toggleY"].is_number()) s.toggleY = j["toggleY"].get<float>();
     } catch (...) {
         // Malformed file — silently return defaults.
     }
@@ -99,46 +152,13 @@ void Save(const std::string& path, const CRTSettings& s) {
     if (!f.is_open()) return;
 
     json j;
-    j["curvatureX"]        = s.curvatureX;
-    j["curvatureY"]        = s.curvatureY;
-    j["zoom"]              = s.zoom;
-    j["scanlineIntensity"] = s.scanlineIntensity;
-    j["scanlineCount"]     = s.scanlineCount;
-    j["vignetteStrength"]  = s.vignetteStrength;
-    j["glowStrength"]      = s.glowStrength;
-    j["brightness"]        = s.brightness;
-    j["contrast"]          = s.contrast;
-    j["saturation"]        = s.saturation;
-    j["flickerIntensity"]   = s.flickerIntensity;
-    j["flickerSpeed"]       = s.flickerSpeed;
-    j["flickerRandomness"]  = s.flickerRandomness;
-    j["humBarIntensity"]    = s.humBarIntensity;
-    j["humBarSpeed"]        = s.humBarSpeed;
-    j["humBarFrequency"]    = s.humBarFrequency;
-    j["diffuseStrength"]    = s.diffuseStrength;
-    j["diffuseThreshold"]   = s.diffuseThreshold;
-    j["phosphorR"]          = s.phosphorR;
-    j["phosphorG"]          = s.phosphorG;
-    j["phosphorB"]          = s.phosphorB;
-    j["staticIntensity"]     = s.staticIntensity;
-    j["staticSpeed"]         = s.staticSpeed;
-    j["shadowMaskIntensity"] = s.shadowMaskIntensity;
-    j["shadowMaskScale"]     = s.shadowMaskScale;
-    j["shadowMaskType"]      = s.shadowMaskType;
-    j["convergence"]         = s.convergence;
-    j["menuStyle"]         = s.menuStyle;
-    j["cursorScale"]       = s.cursorScale;
-    j["cursorThickness"]   = s.cursorThickness;
-    j["cursorR"]           = s.cursorR;
-    j["cursorG"]           = s.cursorG;
-    j["cursorB"]           = s.cursorB;
-    j["cursorStroke"]      = s.cursorStroke;
-    j["cursorPlain"]       = s.cursorPlain;
-    j["hiddenSources"]          = s.hiddenSources;
-    j["audioCaptureDeviceId"]   = s.audioCaptureDeviceId;
+    VisualToJson(s, j);
+    j["menuStyle"]            = s.menuStyle;
+    j["hiddenSources"]        = s.hiddenSources;
+    j["audioCaptureDeviceId"] = s.audioCaptureDeviceId;
     // menuVisible NOT saved — always starts closed on next launch.
-    j["toggleX"]           = s.toggleX;
-    j["toggleY"]           = s.toggleY;
+    j["toggleX"]              = s.toggleX;
+    j["toggleY"]              = s.toggleY;
 
     f << j.dump(4);
 }
