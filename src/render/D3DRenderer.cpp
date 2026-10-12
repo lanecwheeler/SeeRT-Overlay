@@ -421,6 +421,11 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
                               ID3D11ShaderResourceView* cursorSRV,
                               float cursorX, float cursorY,
                               int cursorTexW, int cursorTexH, float cursorScale) {
+    // Retry a resize that failed earlier (WM_SIZE won't fire again on its own).
+    if (m_pendingWidth > 0 && m_pendingHeight > 0)
+        Resize(m_pendingWidth, m_pendingHeight);
+    if (!m_rtv || !m_intermediateRTV) return;
+
     const float black[4] = { 0.f, 0.f, 0.f, 1.f };
 
     D3D11_VIEWPORT mainVP = {};
@@ -636,10 +641,10 @@ void D3DRenderer::RenderPassthrough(ID3D11Texture2D* tex) {
 // ---------------------------------------------------------------------------
 void D3DRenderer::Resize(int w, int h) {
     if (w <= 0 || h <= 0) return;
-    if (w == m_width && h == m_height) return;
-
-    m_width  = w;
-    m_height = h;
+    if (w == m_width && h == m_height && m_rtv && m_intermediateRTV) {
+        m_pendingWidth = m_pendingHeight = 0;
+        return;
+    }
 
     m_rtv.Reset();
     m_context->OMSetRenderTargets(0, nullptr, nullptr);
@@ -653,13 +658,38 @@ void D3DRenderer::Resize(int w, int h) {
         kSwapChainFlags); // must match creation flags
 
     if (FAILED(hr)) {
-        OutputDebugStringA("D3DRenderer: ResizeBuffers failed\n");
+        OutputDebugStringA("D3DRenderer: ResizeBuffers failed — will retry\n");
+        // The buffers keep their old size; re-acquire a view of them so we
+        // keep rendering, and leave m_width/m_height untouched so they still
+        // describe the real buffers.  RenderFrame retries the resize.
+        m_pendingWidth  = w;
+        m_pendingHeight = h;
+        CreateBackBufferRTV();
         return;
     }
 
-    ComPtr<ID3D11Texture2D> backbuffer;
-    m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backbuffer));
-    m_device->CreateRenderTargetView(backbuffer.Get(), nullptr, &m_rtv);
+    m_width  = w;
+    m_height = h;
+    m_pendingWidth = m_pendingHeight = 0;
 
-    CreateIntermediateRT();
+    if (!CreateBackBufferRTV() || !CreateIntermediateRT()) {
+        // Leave a retry pending so a transient failure doesn't stick.
+        m_pendingWidth  = w;
+        m_pendingHeight = h;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CreateBackBufferRTV — (re)creates m_rtv for swap chain buffer 0.
+// ---------------------------------------------------------------------------
+bool D3DRenderer::CreateBackBufferRTV() {
+    m_rtv.Reset();
+    ComPtr<ID3D11Texture2D> backbuffer;
+    if (FAILED(m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backbuffer))) ||
+        FAILED(m_device->CreateRenderTargetView(backbuffer.Get(), nullptr, &m_rtv))) {
+        OutputDebugStringA("D3DRenderer: CreateBackBufferRTV failed\n");
+        m_rtv.Reset();
+        return false;
+    }
+    return true;
 }

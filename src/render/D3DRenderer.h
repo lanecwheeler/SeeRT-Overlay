@@ -74,6 +74,7 @@ public:
 
 private:
     bool LoadShaders();
+    bool CreateBackBufferRTV();
     bool CreateIntermediateRT();
     void UpdateConstantBuffer(const CRTSettings& settings);
 
@@ -118,6 +119,10 @@ private:
 
     int m_width  = 1280;
     int m_height = 720;
+
+    // Non-zero when a Resize() failed — RenderFrame retries it each frame.
+    int m_pendingWidth  = 0;
+    int m_pendingHeight = 0;
 
     // Waitable swap chain — reduces frame queue depth to 1, cutting display
     // latency from ~3 frames (DXGI default) to ~1 frame.
