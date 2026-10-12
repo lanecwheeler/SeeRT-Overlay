@@ -223,19 +223,14 @@ add_custom_command(TARGET SeeRTOverlay POST_BUILD
 )
 
 # ---------------------------------------------------------------------------
-# Cursor asset — copy from the source tree next to the exe at build time.
+# Cursor asset — copy the default cursor image next to the exe.
 # ---------------------------------------------------------------------------
-set(CURSOR_SRC
-    "${CMAKE_CURRENT_SOURCE_DIR}/../CRT Monitor Overlay Filter/src/renderer/assets/cursors/cooler arrow.png")
-if (EXISTS "${CURSOR_SRC}")
-    add_custom_command(TARGET SeeRTOverlay POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CURSOR_SRC}"
-            "$<TARGET_FILE_DIR:SeeRTOverlay>/cursor.png"
-        COMMENT "Copying cursor asset")
-else()
-    message(WARNING "Cursor asset not found at: ${CURSOR_SRC}")
-endif()
+add_custom_command(TARGET SeeRTOverlay POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/render/assets/cursor.png"
+        "$<TARGET_FILE_DIR:SeeRTOverlay>/cursor.png"
+    COMMENT "Copying cursor asset"
+)
 
 # ---------------------------------------------------------------------------
 # Font assets — copy TTFs next to the exe so they can be loaded at runtime.

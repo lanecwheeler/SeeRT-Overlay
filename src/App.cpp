@@ -1274,8 +1274,7 @@ void App::Tick() {
     m_renderer.RenderFrame(tex, m_settings, streamTex, imguiDrawData);
 
     // Cursor state for secondary overlays — same visibility rules as primary.
-    const bool showSecondaryCursor = m_cursorSRV &&
-        !m_settings.cursorPlain &&
+    const bool showSecondaryCursor = CanDrawSecondaryCursor() &&
         (!m_settings.cursorAutoHide || m_settings.menuVisible || m_cursorShowTimer > 0.f);
 
     POINT globalCursor = {};
@@ -1431,7 +1430,10 @@ void App::BeginImGuiFrame() {
         if (m_selectedMonitor) {
             HMONITOR cursorMon = MonitorFromPoint(screenPt, MONITOR_DEFAULTTONEAREST);
             bool onCapturedMonitor = (cursorMon == m_selectedMonitor);
-            if (!onCapturedMonitor) {
+            // Secondary overlays can only draw the image cursor as a sprite.
+            // Without one, leave the system cursor visible there rather than
+            // hiding it and drawing nothing.
+            if (!onCapturedMonitor && CanDrawSecondaryCursor()) {
                 for (auto& s : m_secondaryOverlays)
                     if (cursorMon == s->hmon) { onCapturedMonitor = true; break; }
             }

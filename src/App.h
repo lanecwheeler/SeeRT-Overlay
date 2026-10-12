@@ -142,6 +142,10 @@ private:
     int m_cursorTexW = 0;
     int m_cursorTexH = 0;
 
+    // Secondary overlays have no ImGui, so they can only show the image
+    // cursor (as a sprite) — not the plain/fallback triangle.
+    bool CanDrawSecondaryCursor() const { return m_cursorSRV && !m_settings.cursorPlain; }
+
     // Shake-to-show state.
     POINT m_lastMousePt      = {};   // previous frame mouse position
     float m_shakeAccum       = 0.f; // decaying speed accumulator (px/frame units)
