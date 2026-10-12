@@ -101,6 +101,7 @@ private:
     TrayIcon      m_trayIcon;
 
     bool m_overlayPaused = false;
+    void SetOverlaysVisible(bool visible);
 
     struct AudioDevEntry { std::string id; std::string name; };
     std::vector<AudioDevEntry> m_audioDevices;

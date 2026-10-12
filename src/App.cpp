@@ -841,16 +841,14 @@ void App::OnTrayNotify(WPARAM /*wParam*/, LPARAM lParam) {
         ToggleMenu();
     } else if (cmd == TrayIcon::CMD_PAUSE) {
         m_overlayPaused = !m_overlayPaused;
+        SetOverlaysVisible(!m_overlayPaused);
         if (m_overlayPaused) {
-            ShowWindow(m_outputHwnd, SW_HIDE);
             if (m_cursorHidden) {
                 SystemParametersInfo(SPI_SETCURSORS, 0, nullptr, 0);
                 m_cursorHidden = false;
             }
-        } else {
-            ShowWindow(m_outputHwnd, SW_SHOWNOACTIVATE);
-            // Tick()'s per-frame cursor check will re-hide on the next frame.
         }
+        // On resume, Tick()'s per-frame cursor check re-hides on the next frame.
     } else if (cmd == TrayIcon::CMD_MOUSE) {
         m_settings.cursorAutoHide = !m_settings.cursorAutoHide;
         Settings::Save(m_settingsPath, m_settings);
@@ -861,6 +859,16 @@ void App::OnTrayNotify(WPARAM /*wParam*/, LPARAM lParam) {
         if (idx >= 0 && idx < (int)m_orderedPresets.size())
             Presets::Apply(m_settings, m_orderedPresets[idx].settings);
     }
+}
+
+// Shows or hides the primary overlay and every secondary overlay together.
+// Tick() stops rendering while paused, so any overlay left visible would sit
+// on top of its monitor showing a frozen frame.
+void App::SetOverlaysVisible(bool visible) {
+    const int cmd = visible ? SW_SHOWNOACTIVATE : SW_HIDE;
+    ShowWindow(m_outputHwnd, cmd);
+    for (auto& s : m_secondaryOverlays)
+        ShowWindow(s->hwnd, cmd);
 }
 
 void App::AddMonitorOverlay(HMONITOR hmon) {
