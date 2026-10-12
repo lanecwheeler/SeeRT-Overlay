@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "Mmdevapi.lib")
@@ -191,155 +192,232 @@ static bool TryProcessExclusionCapture(ComPtr<IAudioClient>& out, HANDLE stopEve
 }
 
 // ---------------------------------------------------------------------------
-// TryStandardLoopbackCapture — falls back to a standard WASAPI loopback tap
-// on the default render endpoint.  All desktop audio is captured (including
-// our own render output), but this is the approach that is known to work even
-// when ActivateAudioInterfaceAsync / process-exclusion loopback is unavailable.
+// Helpers
 // ---------------------------------------------------------------------------
-static bool TryStandardLoopbackCapture(ComPtr<IAudioClient>& out,
-                                        WAVEFORMATEX** pwfxOut,
-                                        const std::string& deviceId) {
-    ComPtr<IMMDeviceEnumerator> enumerator;
-    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
-                                CLSCTX_ALL, IID_PPV_ARGS(&enumerator)))) {
-        Log("  CoCreateInstance(MMDeviceEnumerator) failed");
-        return false;
+static std::wstring DeviceId(IMMDevice* dev) {
+    std::wstring out;
+    LPWSTR id = nullptr;
+    if (dev && SUCCEEDED(dev->GetId(&id))) {
+        out = id;
+        CoTaskMemFree(id);
     }
+    return out;
+}
 
-    ComPtr<IMMDevice> device;
-    if (!deviceId.empty()) {
-        // Convert UTF-8 device ID to wide string and activate that endpoint.
-        int wlen = MultiByteToWideChar(CP_UTF8, 0, deviceId.c_str(), -1, nullptr, 0);
-        std::wstring wid(wlen, L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, deviceId.c_str(), -1, wid.data(), wlen);
-        if (FAILED(enumerator->GetDevice(wid.c_str(), &device))) {
-            Log("  GetDevice('%s') failed — falling back to default", deviceId.c_str());
-            device = nullptr;
-        }
-    }
-    if (!device) {
-        if (FAILED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device))) {
-            Log("  GetDefaultAudioEndpoint failed");
-            return false;
-        }
-    }
+// Copies a WAVEFORMATEX (including any WAVEFORMATEXTENSIBLE tail) into owned storage.
+static std::vector<BYTE> CopyFormat(const WAVEFORMATEX* wf) {
+    const BYTE* p = reinterpret_cast<const BYTE*>(wf);
+    return std::vector<BYTE>(p, p + sizeof(WAVEFORMATEX) + wf->cbSize);
+}
 
+static std::vector<BYTE> MixFormat(IAudioClient* client) {
+    WAVEFORMATEX* wf = nullptr;
+    if (FAILED(client->GetMixFormat(&wf)) || !wf) return {};
+    std::vector<BYTE> out = CopyFormat(wf);
+    CoTaskMemFree(wf);
+    return out;
+}
+
+static const WAVEFORMATEX* AsFormat(const std::vector<BYTE>& v) {
+    return reinterpret_cast<const WAVEFORMATEX*>(v.data());
+}
+
+// ---------------------------------------------------------------------------
+// InitStandardLoopback — standard WASAPI loopback tap on a render endpoint.
+// Captures everything played on that endpoint, including our own playback,
+// so it must only be used when we play back on a DIFFERENT endpoint.
+// ---------------------------------------------------------------------------
+static bool InitStandardLoopback(IMMDevice* device, ComPtr<IAudioClient>& out,
+                                 std::vector<BYTE>& fmtOut) {
     ComPtr<IAudioClient> client;
     if (FAILED(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
-                                 reinterpret_cast<void**>(client.GetAddressOf())))) {
+                                reinterpret_cast<void**>(client.GetAddressOf())))) {
         Log("  Activate(IAudioClient) for loopback failed");
         return false;
     }
 
-    client->GetMixFormat(pwfxOut);
-
-    HRESULT hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
-        AUDCLNT_STREAMFLAGS_LOOPBACK, 200000, 0, *pwfxOut, nullptr);
-    if (FAILED(hr)) {
-        Log("  Standard loopback Initialize failed hr=0x%08X", (unsigned)hr);
-        CoTaskMemFree(*pwfxOut); *pwfxOut = nullptr;
+    std::vector<BYTE> fmt = MixFormat(client.Get());
+    if (fmt.empty()) {
+        Log("  GetMixFormat failed on capture endpoint");
         return false;
     }
 
-    out = client;
+    HRESULT hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
+        AUDCLNT_STREAMFLAGS_LOOPBACK, 200000, 0, AsFormat(fmt), nullptr);
+    if (FAILED(hr)) {
+        Log("  Standard loopback Initialize failed hr=0x%08X", (unsigned)hr);
+        return false;
+    }
+
+    out    = client;
+    fmtOut = std::move(fmt);
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// InitProcessExclusionLoopback — activates and initialises a process-loopback
+// client that captures all system audio EXCEPT this process tree's output.
+//
+// A process-loopback client cannot report a mix format (GetMixFormat returns
+// E_NOTIMPL), so we pass one explicitly: the playback endpoint's mix format
+// first, then 16-bit stereo PCM (the format Microsoft's ApplicationLoopback
+// sample uses).  AUTOCONVERTPCM lets the engine convert to whichever we ask
+// for.  The client must be event-driven, so captureEvent receives the handle.
+// ---------------------------------------------------------------------------
+static bool InitProcessExclusionLoopback(ComPtr<IAudioClient>& out,
+                                         std::vector<BYTE>& fmtOut,
+                                         const std::vector<BYTE>& preferredFmt,
+                                         HANDLE stopEvent, HANDLE captureEvent) {
+    WAVEFORMATEX pcm16 = {};
+    pcm16.wFormatTag      = WAVE_FORMAT_PCM;
+    pcm16.nChannels       = 2;
+    pcm16.nSamplesPerSec  = 48000;
+    pcm16.wBitsPerSample  = 16;
+    pcm16.nBlockAlign     = pcm16.nChannels * pcm16.wBitsPerSample / 8;
+    pcm16.nAvgBytesPerSec = pcm16.nSamplesPerSec * pcm16.nBlockAlign;
+
+    std::vector<std::vector<BYTE>> candidates;
+    if (!preferredFmt.empty()) candidates.push_back(preferredFmt);
+    candidates.push_back(CopyFormat(&pcm16));
+
+    const DWORD flags = AUDCLNT_STREAMFLAGS_LOOPBACK
+                      | AUDCLNT_STREAMFLAGS_EVENTCALLBACK
+                      | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+                      | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+
+    for (const auto& fmt : candidates) {
+        // An activated client can only be initialised once, so activate a
+        // fresh one per attempt.
+        ComPtr<IAudioClient> client;
+        if (!TryProcessExclusionCapture(client, stopEvent)) return false;
+
+        const WAVEFORMATEX* wf = AsFormat(fmt);
+        HRESULT hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags,
+                                        200000, 0, wf, nullptr);
+        Log("  Initialize(%u ch %u Hz %u bits) hr=0x%08X",
+            wf->nChannels, wf->nSamplesPerSec, wf->wBitsPerSample, (unsigned)hr);
+        if (FAILED(hr)) continue;
+
+        if (FAILED(hr = client->SetEventHandle(captureEvent))) {
+            Log("  SetEventHandle failed hr=0x%08X", (unsigned)hr);
+            continue;
+        }
+        out    = client;
+        fmtOut = fmt;
+        return true;
+    }
+    return false;
 }
 
 void AudioLoopback::Run() {
     LogOpen();
     Log("AudioLoopback::Run() — thread started, PID=%u", GetCurrentProcessId());
 
+    HANDLE captureEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    RunPump(captureEvent);
+    if (captureEvent) CloseHandle(captureEvent);
+
+    Log("AudioLoopback::Run() — thread exiting");
+    LogClose();
+}
+
+void AudioLoopback::RunPump(HANDLE captureEvent) {
     HRESULT hr;
-    WAVEFORMATEX* pwfx = nullptr;
 
     // -----------------------------------------------------------------------
-    // Try process-exclusion loopback first (no feedback loop, preferred).
-    // Fall back to standard loopback if unavailable.
+    // Resolve the playback endpoint (Windows default — unmuted so Discord's
+    // per-app capture picks this session up when the stream window is shared)
+    // and the capture endpoint (the user's selection, or the default).
     // -----------------------------------------------------------------------
-    bool usedProcessExclusion = false;
-    Log("Attempting process-exclusion loopback...");
-    if (TryProcessExclusionCapture(m_captureAudioClient, m_stopEvent)) {
-        HRESULT fmtHr = m_captureAudioClient->GetMixFormat(&pwfx);
-        Log("  GetMixFormat hr=0x%08X pwfx=%p", (unsigned)fmtHr, (void*)pwfx);
-        if (SUCCEEDED(fmtHr) && pwfx) {
-            Log("  Format: %u ch %u Hz %u bits",
-                pwfx->nChannels, pwfx->nSamplesPerSec, pwfx->wBitsPerSample);
-        }
-        // Try flags=0 / duration=0 first, then with LOOPBACK flag, then with 1s buffer.
-        const struct { DWORD flags; REFERENCE_TIME dur; } kTries[] = {
-            { 0,                            0         },
-            { AUDCLNT_STREAMFLAGS_LOOPBACK, 0         },
-            { AUDCLNT_STREAMFLAGS_LOOPBACK, 10000000  },
-            { 0,                            10000000  },
-        };
-        for (auto& t : kTries) {
-            hr = m_captureAudioClient->Initialize(
-                AUDCLNT_SHAREMODE_SHARED, t.flags, t.dur, 0, pwfx, nullptr);
-            Log("  Initialize(flags=0x%X dur=%lld) hr=0x%08X",
-                t.flags, (long long)t.dur, (unsigned)hr);
-            if (SUCCEEDED(hr)) { usedProcessExclusion = true; break; }
-        }
-        if (!usedProcessExclusion) {
-            Log("  All Initialize attempts failed — falling back");
-            m_captureAudioClient.Reset();
-            CoTaskMemFree(pwfx); pwfx = nullptr;
-        } else {
-            Log("  Capture client initialized (process-exclusion)");
-        }
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+                                CLSCTX_ALL, IID_PPV_ARGS(&enumerator)))) {
+        Log("CoCreateInstance(MMDeviceEnumerator) failed");
+        return;
     }
 
-    if (!m_captureAudioClient) {
-        Log("Falling back to standard WASAPI loopback (device='%s')...", m_captureDeviceId.c_str());
-        if (!TryStandardLoopbackCapture(m_captureAudioClient, &pwfx, m_captureDeviceId)) {
-            Log("FATAL: both loopback strategies failed — exiting");
-            LogClose();
+    ComPtr<IMMDevice> renderDevice;
+    if (FAILED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &renderDevice))) {
+        Log("Failed to get default render device");
+        return;
+    }
+
+    ComPtr<IMMDevice> captureDevice;
+    if (!m_captureDeviceId.empty()) {
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, m_captureDeviceId.c_str(), -1, nullptr, 0);
+        std::wstring wid(wlen > 0 ? wlen - 1 : 0, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, m_captureDeviceId.c_str(), -1, wid.data(), wlen);
+        if (FAILED(enumerator->GetDevice(wid.c_str(), &captureDevice))) {
+            Log("GetDevice('%s') failed — using the default device", m_captureDeviceId.c_str());
+            captureDevice = nullptr;
+        }
+    }
+    if (!captureDevice) captureDevice = renderDevice;
+
+    // -----------------------------------------------------------------------
+    // Pick the capture strategy.  A standard loopback tap on the endpoint we
+    // play back on would capture our own output and feed it back forever, so:
+    //   different endpoint → standard loopback on the selected device
+    //   same endpoint      → process-exclusion loopback (skips our output)
+    // If process exclusion is unavailable we stop rather than create feedback.
+    // -----------------------------------------------------------------------
+    std::vector<BYTE> fmt;
+    bool eventDriven = false;
+
+    if (DeviceId(captureDevice.Get()) != DeviceId(renderDevice.Get())) {
+        Log("Capture endpoint differs from playback — using standard loopback");
+        if (!InitStandardLoopback(captureDevice.Get(), m_captureAudioClient, fmt)) {
+            Log("FATAL: standard loopback failed — exiting");
             return;
         }
-        Log("  Capture client initialized (standard loopback)");
+    } else {
+        Log("Capture endpoint is the playback endpoint — using process-exclusion loopback");
+        std::vector<BYTE> renderMix;
+        {
+            ComPtr<IAudioClient> probe;
+            if (SUCCEEDED(renderDevice->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                                                 reinterpret_cast<void**>(probe.GetAddressOf()))))
+                renderMix = MixFormat(probe.Get());
+        }
+        if (!captureEvent ||
+            !InitProcessExclusionLoopback(m_captureAudioClient, fmt, renderMix,
+                                          m_stopEvent, captureEvent)) {
+            Log("FATAL: process-exclusion loopback unavailable — not falling back to "
+                "standard loopback on the playback device, which would feed back");
+            return;
+        }
+        eventDriven = true;
     }
 
+    const WAVEFORMATEX* pwfx = AsFormat(fmt);
     m_frameSize = pwfx->nBlockAlign;
     Log("Format: %u ch, %u Hz, %u bits, frameSize=%u, method=%s",
         pwfx->nChannels, pwfx->nSamplesPerSec, pwfx->wBitsPerSample, m_frameSize,
-        usedProcessExclusion ? "process-exclusion" : "standard-loopback");
+        eventDriven ? "process-exclusion" : "standard-loopback");
 
     if (FAILED(hr = m_captureAudioClient->GetService(IID_PPV_ARGS(&m_captureClient)))) {
         Log("GetService(IAudioCaptureClient) failed hr=0x%08X", (unsigned)hr);
-        CoTaskMemFree(pwfx);
         return;
     }
     Log("Capture client ready");
 
     // -----------------------------------------------------------------------
-    // Render to the default output device — unmuted so Discord's per-app
-    // process-loopback capture picks up this session when the stream window
-    // is shared.
+    // Playback client.  AUTOCONVERTPCM lets it accept the capture format even
+    // when the two endpoints run at different sample rates / channel counts.
     // -----------------------------------------------------------------------
-    ComPtr<IMMDeviceEnumerator> enumerator;
-    ComPtr<IMMDevice> renderDevice;
-
-    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
-                                CLSCTX_ALL, IID_PPV_ARGS(&enumerator)))
-        || FAILED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &renderDevice))) {
-        Log("Failed to get default render device");
-        CoTaskMemFree(pwfx);
-        return;
-    }
-
     if (FAILED(hr = renderDevice->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
                                            reinterpret_cast<void**>(m_renderAudioClient.GetAddressOf())))) {
         Log("Activate render failed hr=0x%08X", (unsigned)hr);
-        CoTaskMemFree(pwfx);
         return;
     }
 
     if (FAILED(hr = m_renderAudioClient->Initialize(
-            AUDCLNT_SHAREMODE_SHARED, 0, 200000, 0, pwfx, nullptr))) {
+            AUDCLNT_SHAREMODE_SHARED,
+            AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+            200000, 0, pwfx, nullptr))) {
         Log("Render Initialize failed hr=0x%08X", (unsigned)hr);
-        CoTaskMemFree(pwfx);
         return;
     }
-    CoTaskMemFree(pwfx);
 
     m_renderAudioClient->GetBufferSize(&m_renderBufferFrames);
     Log("Render buffer = %u frames", m_renderBufferFrames);
@@ -354,14 +432,18 @@ void AudioLoopback::Run() {
     Log("Both clients started — audio loopback running");
 
     // -----------------------------------------------------------------------
-    // Main pump loop.
+    // Main pump loop.  Event-driven clients wake us when a packet is ready;
+    // the 10 ms timeout doubles as the polling interval for standard loopback.
     // -----------------------------------------------------------------------
     UINT64 totalCaptured = 0, totalRendered = 0;
     DWORD  lastReport    = GetTickCount();
 
+    HANDLE waitHandles[] = { m_stopEvent, captureEvent };
+    const DWORD waitCount = eventDriven ? 2 : 1;
+
     for (;;) {
-        if (WaitForSingleObject(m_stopEvent, 10) != WAIT_TIMEOUT)
-            break;
+        if (WaitForMultipleObjects(waitCount, waitHandles, FALSE, 10) == WAIT_OBJECT_0)
+            break; // stop requested
 
         DWORD now = GetTickCount();
         if (now - lastReport >= 5000) {

@@ -5,10 +5,14 @@
 #include <audioclient.h>
 #include <string>
 
-// Captures all desktop audio except this process's own render output
-// (process-exclusion loopback) and plays it back through a standard WASAPI
-// render session so Discord's per-application audio capture picks it up when
-// the user shares the stream window.  All WASAPI init happens on the background
+// Loopback-captures desktop audio and plays it back through a standard WASAPI
+// render session on the default device, so Discord's per-application audio
+// capture picks it up when the user shares the stream window.
+//
+// To avoid capturing our own playback (a feedback loop), a selected endpoint
+// other than the playback device is tapped with standard loopback, while the
+// playback device itself is captured with process-exclusion loopback, which
+// skips this process's output.  All WASAPI init happens on the background
 // thread after CoInitialize, sidestepping WinRT apartment conflicts.
 class AudioLoopback {
 public:
@@ -28,6 +32,7 @@ public:
 private:
     static DWORD WINAPI ThreadProc(LPVOID param);
     void Run();
+    void RunPump(HANDLE captureEvent);
 
     Microsoft::WRL::ComPtr<IAudioClient>        m_captureAudioClient;
     Microsoft::WRL::ComPtr<IAudioCaptureClient> m_captureClient;
