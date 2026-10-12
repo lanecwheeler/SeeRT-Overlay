@@ -33,7 +33,10 @@ static void HR(HRESULT hr, const char* msg) {
     if (FAILED(hr)) {
         OutputDebugStringA(msg);
         OutputDebugStringA("\n");
-        DebugBreak();
+        // Only break when a debugger is attached — without one, DebugBreak()
+        // raises an unhandled breakpoint exception and kills the process
+        // before the throw below can be caught.
+        if (IsDebuggerPresent()) DebugBreak();
         throw std::runtime_error(msg);
     }
 }

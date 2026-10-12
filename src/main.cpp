@@ -1,5 +1,7 @@
 #include <Windows.h>
 #include <winrt/Windows.Foundation.h>  // winrt::init_apartment
+#include <cstdlib>    // std::abort
+#include <exception>  // std::set_terminate
 
 // ---------------------------------------------------------------------------
 // GPU selection hints — must be in the EXE, not a DLL.
@@ -217,9 +219,30 @@ static HWND CreateOutputWindow(HINSTANCE hInstance) {
 }
 
 // ---------------------------------------------------------------------------
+// CrashFilter — last-chance handler for unhandled exceptions.
+//
+// App replaces the system cursors with blank ones via SetSystemCursor, which
+// outlives the process.  If we crash without restoring them the user is left
+// with no visible cursor anywhere until they sign out, so put them back first.
+// ---------------------------------------------------------------------------
+static LONG WINAPI CrashFilter(EXCEPTION_POINTERS*) {
+    SystemParametersInfoW(SPI_SETCURSORS, 0, nullptr, 0);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// Uncaught C++ exceptions go through std::terminate → abort(), which bypasses
+// the SEH filter above, so hook that path too.
+static void CrashTerminate() {
+    SystemParametersInfoW(SPI_SETCURSORS, 0, nullptr, 0);
+    std::abort();
+}
+
+// ---------------------------------------------------------------------------
 // WinMain
 // ---------------------------------------------------------------------------
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int /*nCmdShow*/) {
+    SetUnhandledExceptionFilter(CrashFilter);
+    std::set_terminate(CrashTerminate);
     winrt::init_apartment();
 
     RegisterWindowClasses(hInstance);

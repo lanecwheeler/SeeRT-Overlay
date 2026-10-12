@@ -605,8 +605,12 @@ bool App::Init(HWND hwnd) {
 
     if (FAILED(hr)) { OutputDebugStringA("App: D3D11CreateDevice failed\n"); return false; }
 
-    if (!m_renderer.Init(hwnd, m_device.Get(), m_context.Get())) {
-        OutputDebugStringA("App: D3DRenderer::Init failed\n"); return false;
+    try {
+        if (!m_renderer.Init(hwnd, m_device.Get(), m_context.Get())) {
+            OutputDebugStringA("App: D3DRenderer::Init failed\n"); return false;
+        }
+    } catch (const std::exception&) {
+        OutputDebugStringA("App: D3DRenderer::Init threw\n"); return false;
     }
 
     MakeChildrenTransparent();
