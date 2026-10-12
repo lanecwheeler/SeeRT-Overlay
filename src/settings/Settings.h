@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <filesystem>
 #include <nlohmann/json_fwd.hpp>
 
 // CRTSettings is the single source-of-truth for all shader + post-process parameters.
@@ -67,14 +68,20 @@ struct CRTSettings {
 };
 
 namespace Settings {
+    // Returns %APPDATA%\SeeRT Overlay — where settings, presets and user
+    // assets live.  Empty (i.e. the current directory) if APPDATA is unavailable.
+    // Paths are kept as std::filesystem::path (UTF-16 on Windows) so profile
+    // directories with non-ASCII characters open correctly.
+    std::filesystem::path DataDir();
+
     // Returns the default %APPDATA%\SeeRT Overlay\settings.json path.
-    std::string DefaultPath();
+    std::filesystem::path DefaultPath();
 
     // Loads settings from JSON at path. Returns defaults if the file does not exist.
-    CRTSettings Load(const std::string& path);
+    CRTSettings Load(const std::filesystem::path& path);
 
     // Serialises settings to JSON at path. Creates parent directories if needed.
-    void Save(const std::string& path, const CRTSettings& s);
+    void Save(const std::filesystem::path& path, const CRTSettings& s);
 
     // Read/write the visual (shader + cursor) fields — the set a preset
     // captures.  Shared by settings.json and presets.json so the field lists

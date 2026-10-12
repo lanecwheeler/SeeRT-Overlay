@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <chrono>
+#include <filesystem>
 #include "render/D3DRenderer.h"
 #include "ui/MonitorPicker.h"
 #include "ui/WindowPicker.h"
@@ -106,13 +107,13 @@ private:
     void RefreshAudioDevices();
 
     CRTSettings m_settings;
-    std::string m_settingsPath;
+    std::filesystem::path m_settingsPath;
     bool        m_shutdownCalled = false;
 
     std::vector<UserPreset>  m_userPresets;
     std::vector<std::string> m_presetOrder;
     std::vector<PresetItem>  m_orderedPresets;
-    std::string              m_presetsPath;
+    std::filesystem::path    m_presetsPath;
 
     void RebuildOrderedPresets();
 

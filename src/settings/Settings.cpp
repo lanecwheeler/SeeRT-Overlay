@@ -13,20 +13,20 @@ namespace fs = std::filesystem;
 
 namespace Settings {
 
-std::string DefaultPath() {
+fs::path DataDir() {
     // Prefer SHGetKnownFolderPath so we get the true APPDATA even under
     // redirected profiles.
     PWSTR roaming = nullptr;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &roaming))) {
-        std::wstring ws(roaming);
+        fs::path dir = fs::path(roaming) / L"SeeRT Overlay";
         CoTaskMemFree(roaming);
-        // Convert UTF-16 → UTF-8 properly via WideCharToMultiByte.
-        int len = WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), -1, nullptr, 0, nullptr, nullptr);
-        std::string utf8(len > 0 ? len - 1 : 0, '\0');
-        WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), -1, utf8.data(), len, nullptr, nullptr);
-        return utf8 + "\\SeeRT Overlay\\settings.json";
+        return dir;
     }
-    return "settings.json"; // fallback to cwd
+    return {}; // fallback to cwd
+}
+
+fs::path DefaultPath() {
+    return DataDir() / L"settings.json";
 }
 
 void VisualToJson(const CRTSettings& s, json& j) {
@@ -113,7 +113,7 @@ void VisualFromJson(const json& j, CRTSettings& s) {
     getB("cursorPlain",         s.cursorPlain);
 }
 
-CRTSettings Load(const std::string& path) {
+CRTSettings Load(const fs::path& path) {
     CRTSettings s; // filled with member-initializer defaults
     std::ifstream f(path);
     if (!f.is_open()) return s;
@@ -140,11 +140,11 @@ CRTSettings Load(const std::string& path) {
     return s;
 }
 
-void Save(const std::string& path, const CRTSettings& s) {
+void Save(const fs::path& path, const CRTSettings& s) {
     // Ensure parent directory exists.
-    fs::path p(path);
     std::error_code ec;
-    fs::create_directories(p.parent_path(), ec);
+    if (path.has_parent_path())
+        fs::create_directories(path.parent_path(), ec);
     // Ignore ec — if we can't create the dir, the ofstream open will fail and
     // we just swallow it rather than crashing the render loop.
 

@@ -338,15 +338,8 @@ const std::vector<Presets::BuiltInPreset>& Presets::GetBuiltIn() {
 // ---------------------------------------------------------------------------
 // DefaultPath — %APPDATA%\SeeRT Overlay\presets.json
 // ---------------------------------------------------------------------------
-std::string Presets::DefaultPath() {
-    std::string settingsPath = Settings::DefaultPath();
-    // Replace "settings.json" suffix with "presets.json".
-    const std::string kOld = "settings.json";
-    const std::string kNew = "presets.json";
-    auto pos = settingsPath.rfind(kOld);
-    if (pos != std::string::npos)
-        settingsPath.replace(pos, kOld.size(), kNew);
-    return settingsPath;
+fs::path Presets::DefaultPath() {
+    return Settings::DataDir() / L"presets.json";
 }
 
 // ---------------------------------------------------------------------------
@@ -414,7 +407,7 @@ std::vector<std::string> Presets::DefaultOrder(const std::vector<UserPreset>& us
 // Load — reads { "order": [...], "presets": [...] }.
 // Falls back gracefully to the old bare-array format.
 // ---------------------------------------------------------------------------
-void Presets::Load(const std::string& path,
+void Presets::Load(const fs::path& path,
                    std::vector<UserPreset>& outPresets,
                    std::vector<std::string>& outOrder)
 {
@@ -455,14 +448,14 @@ void Presets::Load(const std::string& path,
 // ---------------------------------------------------------------------------
 // Save — writes { "order": [...], "presets": [...] }.
 // ---------------------------------------------------------------------------
-void Presets::Save(const std::string& path,
+void Presets::Save(const fs::path& path,
                    const std::vector<UserPreset>& presets,
                    const std::vector<std::string>& order)
 {
     try {
-        fs::path p(path);
         std::error_code ec;
-        fs::create_directories(p.parent_path(), ec);
+        if (path.has_parent_path())
+            fs::create_directories(path.parent_path(), ec);
 
         json presetArr = json::array();
         for (const auto& preset : presets) {

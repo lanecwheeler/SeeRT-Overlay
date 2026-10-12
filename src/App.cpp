@@ -675,12 +675,15 @@ void App::InitImGui(HWND hwnd) {
 
     // Load custom fonts from the directory containing the exe.
     // Must happen before the first frame so the atlas is built correctly.
+    // ImGui takes UTF-8 filenames, so build the path wide and convert — the
+    // ANSI GetModuleFileNameA mangles non-ASCII install directories.
     {
-        char exePath[MAX_PATH];
-        GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-        if (char* sep = strrchr(exePath, '\\')) *(sep + 1) = '\0';
+        wchar_t exeBuf[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exeBuf, MAX_PATH);
+        const std::filesystem::path exeDir = std::filesystem::path(exeBuf).parent_path();
         auto ttf = [&](const char* name) -> std::string {
-            return std::string(exePath) + name;
+            const std::u8string u8 = (exeDir / name).u8string();
+            return std::string(u8.begin(), u8.end());
         };
         io.Fonts->AddFontDefault();
         StyleFonts::cherryBomb  = io.Fonts->AddFontFromFileTTF(ttf("CherryBombOne-Regular.ttf").c_str(), 22.f);

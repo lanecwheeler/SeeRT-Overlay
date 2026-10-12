@@ -43,11 +43,11 @@ namespace Presets {
     // User preset + order I/O — stored as { "order": [...], "presets": [...] }.
     // Backwards-compatible: if the file is an old-format JSON array it is treated as
     // just user presets with no saved order (DefaultOrder will be used by the caller).
-    std::string DefaultPath();
-    void Load(const std::string& path,
+    std::filesystem::path DefaultPath();
+    void Load(const std::filesystem::path& path,
               std::vector<UserPreset>& outPresets,
               std::vector<std::string>& outOrder);
-    void Save(const std::string& path,
+    void Save(const std::filesystem::path& path,
               const std::vector<UserPreset>& presets,
               const std::vector<std::string>& order);
 }
