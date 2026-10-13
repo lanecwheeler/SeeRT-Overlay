@@ -78,6 +78,11 @@ static bool  s_sizeSliderHeldNext = false;
 
 static constexpr float kScreenMargin = 20.f;
 
+// Quit confirmation — every style's quit button calls RequestQuit(); the
+// dialog itself is drawn once a frame by SettingsPanel::Draw (DrawQuitConfirm).
+static bool s_quitRequested = false;
+static void RequestQuit() { s_quitRequested = true; }
+
 // A fixed layout length (padding, sidebar width, font size, ...) at the menu scale.
 static float Sc(float v) { return v * s_menuScale; }
 
@@ -768,7 +773,7 @@ static SettingsPanel::DrawResult DrawOSD(CRTSettings& s,
         ImGui::PushStyleColor(ImGuiCol_Button,        kRed);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kRedH);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kRedA);
-        if (ImGui::Button("[ EXIT ]", ImVec2(bw, 0.f))) PostQuitMessage(0);
+        if (ImGui::Button("[ EXIT ]", ImVec2(bw, 0.f))) RequestQuit();
         Tip("Quit the overlay application entirely.");
         ImGui::PopStyleColor(3);
     }
@@ -998,7 +1003,7 @@ static SettingsPanel::DrawResult DrawCamcorder(CRTSettings& s,
         ImGui::PushStyleColor(ImGuiCol_Button,        kRed);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kRedH);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kRedA);
-        if (ImGui::Button("QUIT", ImVec2(btnW, 0.f))) PostQuitMessage(0);
+        if (ImGui::Button("QUIT", ImVec2(btnW, 0.f))) RequestQuit();
         Tip("Quit the overlay.");
         ImGui::PopStyleColor(3);
     }
@@ -1139,7 +1144,7 @@ static SettingsPanel::DrawResult DrawDOS(CRTSettings& s,
         ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.00f, 0.12f, 0.00f, 1.f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.00f, 0.22f, 0.00f, 1.f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.00f, 0.50f, 0.00f, 1.f));
-        if (ImGui::Button("[F10] QUIT",  ImVec2(bw, 0.f))) PostQuitMessage(0);
+        if (ImGui::Button("[F10] QUIT",  ImVec2(bw, 0.f))) RequestQuit();
         Tip("Quit the overlay.");
         ImGui::PopStyleColor(6);
     } else {
@@ -1241,7 +1246,7 @@ static SettingsPanel::DrawResult DrawVCR(CRTSettings& s,
     ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.30f, 0.06f, 0.04f, 1.f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.50f, 0.08f, 0.06f, 1.f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.80f, 0.12f, 0.08f, 1.f));
-    if (ImGui::Button("QUIT", ImVec2(bw, 0.f))) PostQuitMessage(0);
+    if (ImGui::Button("QUIT", ImVec2(bw, 0.f))) RequestQuit();
     Tip("Quit the overlay.");
     ImGui::PopStyleColor(3);
     ImGui::Spacing();
@@ -1438,7 +1443,7 @@ static SettingsPanel::DrawResult DrawDefault(CRTSettings& s,
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kRedH);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kRedA);
         if (ImGui::Button("Exit App", ImVec2(bw, 0.f)))
-            PostQuitMessage(0);
+            RequestQuit();
         Tip("Quit the overlay application entirely.");
         ImGui::PopStyleColor(3);
     }
@@ -1729,7 +1734,9 @@ static SettingsPanel::DrawResult DrawPagedMenu(PagedMenuStyle& st, const char* w
     }
     ImGui::EndChild();
 
-    if (st.page >= 0 && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsAnyItemActive())
+    // Esc steps back — unless it's closing a popup (e.g. the quit dialog).
+    const bool popupOpen = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    if (st.page >= 0 && !popupOpen && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsAnyItemActive())
         goTo(-1);
 
     // Footer — BACK on the left (not on the main page), QUIT on the right.
@@ -1743,7 +1750,7 @@ static SettingsPanel::DrawResult DrawPagedMenu(PagedMenuStyle& st, const char* w
         Tip("Back to the main menu (Esc).");
     }
     ImGui::SetCursorPos(ImVec2(panelW - padX - inset - st.QuitWidth(), footerY));
-    if (st.QuitButton("##quit")) PostQuitMessage(0);
+    if (st.QuitButton("##quit")) RequestQuit();
     Tip("Quit the overlay application entirely.");
 
     // Close button.  It may sit in the window padding, so widen the clip rect to reach it.
@@ -3142,6 +3149,59 @@ public:
 } // namespace arcade
 
 // ---------------------------------------------------------------------------
+// Quit confirmation dialog — drawn in the current style's colours and font.
+// ---------------------------------------------------------------------------
+static ImFont* MenuFont(int styleId) {
+    switch (styleId) {
+    case 3:  return StyleFonts::chakraPetch;
+    case 6:  return StyleFonts::cherryBomb;
+    case 7:  return StyleFonts::cinzel;
+    case 8:  return StyleFonts::bedstead;
+    case 9:  return StyleFonts::shareTech;
+    case 10: return StyleFonts::pressStart;
+    default: return nullptr;   // the default font
+    }
+}
+
+static void DrawQuitConfirm(int styleId) {
+    static constexpr const char* kPopupId = "##quitconfirm";
+    if (s_quitRequested) {
+        ImGui::OpenPopup(kPopupId);
+        s_quitRequested = false;
+    }
+
+    ImFont* font = MenuFont(styleId);
+    if (font) ImGui::PushFont(font, font->LegacySize);
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal(kPopupId, nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
+                               ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::TextUnformatted("Quit SeeRT Overlay?");
+        ImGui::TextDisabled("The CRT effect will switch off.");
+        ImGui::Spacing();
+
+        const ImGuiStyle& st = ImGui::GetStyle();
+        const float bw = std::max(ImGui::CalcTextSize("Cancel").x, ImGui::CalcTextSize("Quit").x)
+                       + st.FramePadding.x * 2.f + Sc(24.f);
+        ImGui::PushStyleColor(ImGuiCol_Button,        kRed);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kRedH);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kRedA);
+        const bool quit = ImGui::Button("Quit", ImVec2(bw, 0.f));
+        ImGui::PopStyleColor(3);
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(bw, 0.f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            ImGui::CloseCurrentPopup();
+        if (quit) {
+            ImGui::CloseCurrentPopup();
+            PostQuitMessage(0);
+        }
+        ImGui::EndPopup();
+    }
+    if (font) ImGui::PopFont();
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 SettingsPanel::DrawResult SettingsPanel::Draw(CRTSettings& s,
@@ -3208,6 +3268,8 @@ SettingsPanel::DrawResult SettingsPanel::Draw(CRTSettings& s,
         }
         default: result = DrawOSD       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
     }
+    DrawQuitConfirm(s.menuStyle);
+
     style = saved;
     s_sizeSliderHeld = s_sizeSliderHeldNext;
     s_cursorInfo = nullptr;
