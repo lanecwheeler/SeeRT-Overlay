@@ -225,6 +225,12 @@ add_custom_command(TARGET SeeRTOverlay POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/src/render/assets/ChakraPetch-Regular.ttf"
         "$<TARGET_FILE_DIR:SeeRTOverlay>/ChakraPetch-Regular.ttf"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/render/assets/MetalMania-Regular.ttf"
+        "$<TARGET_FILE_DIR:SeeRTOverlay>/MetalMania-Regular.ttf"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/render/assets/CinzelDecorative-Bold.ttf"
+        "$<TARGET_FILE_DIR:SeeRTOverlay>/CinzelDecorative-Bold.ttf"
     COMMENT "Copying font assets"
 )
 

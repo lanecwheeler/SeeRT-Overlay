@@ -27,9 +27,10 @@ static constexpr ImVec4 kSecBtnH { 0.05f, 0.65f, 0.40f, 1.00f };
 static constexpr ImVec4 kSecBtnA { 0.10f, 0.80f, 0.50f, 1.00f };
 
 static const char* kStyleNames[] = {
-    "CRT OSD", "Simple", "N64", "Camcorder", "DOS Terminal", "VCR", "64 Adventure"
+    "CRT OSD", "Simple", "N64", "Camcorder", "DOS Terminal", "VCR", "64 Adventure",
+    "Sword & Sorcery"
 };
-static constexpr int kStyleCount = 7;
+static constexpr int kStyleCount = 8;
 
 static const char* kSectionNames[] = {
     "CAPTURE SOURCE", "PRESETS", "GEOMETRY", "SCANLINES",
@@ -1901,7 +1902,7 @@ static SettingsPanel::DrawResult DrawAdventure64(CRTSettings& s,
 
     // Footer — controller-style prompts: (B) BACK on the left, (C) QUIT on the right.
     const float footerY = panelH - kFooterH - Sc(4.f);
-    const float padX    = ImGui::GetStyle().WindowPadding.x;
+    const float padX    = ImGui::GetCursorStartPos().x;   // this window's padding
     if (s_page != kMainPage) {
         ImGui::SetCursorPos(ImVec2(padX + Sc(8.f), footerY));
         if (Prompt("##back", "B", kGreen, "BACK", Sc(20.f))) goTo(kMainPage);
@@ -1915,6 +1916,603 @@ static SettingsPanel::DrawResult DrawAdventure64(CRTSettings& s,
     // It sits in the window padding, so widen the clip rect to reach it.
     ImGui::PushClipRect(wp, ImVec2(wp.x + panelW, wp.y + panelH), false);
     if (CloseButton("##close", ImVec2(wp.x + panelW - Sc(48.f), wp.y + Sc(48.f)), Sc(22.f)))
+        s.menuVisible = false;
+    Tip("Close the settings panel (Ctrl+Shift+C to re-open).");
+    ImGui::PopClipRect();
+
+    ImGui::PopFont();
+    ImGui::End();
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// Sword & Sorcery layout — an 80s barbarian-fantasy dungeon menu.
+//   • A stone wall in a riveted bronze frame, lit by two flickering torches
+//     that cast warm light and drift embers.
+//   • Heavy-metal title in molten gold, with a glint sweeping across it.
+//   • Main page: every settings group as a chamfered stone tablet with
+//     engraved lettering; hovering one wreathes it in purple sorcery and
+//     points a sword at it.  Clicking opens that group's page.
+//   • The panel slams down like a dungeon gate and pages rumble in.
+//   • A skull keeps watch between BACK and QUIT; close is an iron seal on
+//     the top-right corner.
+// ---------------------------------------------------------------------------
+namespace sorcery {
+
+constexpr ImU32 kBronze   = IM_COL32(168, 112,  46, 255);
+constexpr ImU32 kBronzeHi = IM_COL32(236, 184, 100, 255);
+constexpr ImU32 kBronzeLo = IM_COL32( 70,  40,  14, 255);
+constexpr ImU32 kGoldHi   = IM_COL32(255, 246, 190, 255);
+constexpr ImU32 kGold     = IM_COL32(240, 180,  60, 255);
+constexpr ImU32 kGoldLo   = IM_COL32(130,  62,  12, 255);
+constexpr ImU32 kStone    = IM_COL32( 92,  88,  98, 255);
+constexpr ImU32 kMortar   = IM_COL32( 22,  18,  26, 255);
+constexpr ImU32 kEngrave  = IM_COL32(224, 216, 196, 255);  // pale carved lettering
+constexpr ImU32 kShadow   = IM_COL32( 10,   6,  12, 255);
+constexpr ImU32 kSorcery  = IM_COL32(170,  80, 255, 255);  // purple magic glow
+constexpr ImU32 kBlood    = IM_COL32(150,  22,  26, 255);
+constexpr ImU32 kEyeGlow  = IM_COL32(120, 255,  90, 255);  // skull eyes
+constexpr ImU32 kFire[4]  = { IM_COL32(200,  40,  10, 255), IM_COL32(255, 120,  20, 255),
+                              IM_COL32(255, 200,  60, 255), IM_COL32(255, 245, 200, 255) };
+
+constexpr int kMainPage = -1;
+
+ImFont* TitleFont() { return StyleFonts::metalMania ? StyleFonts::metalMania : ImGui::GetFont(); }
+ImFont* BodyFont()  { return StyleFonts::cinzel     ? StyleFonts::cinzel     : ImGui::GetFont(); }
+
+ImU32 WithAlpha(ImU32 c, float a) {
+    return (c & ~IM_COL32_A_MASK) |
+           (static_cast<ImU32>(std::clamp(a, 0.f, 1.f) * 255.f + 0.5f) << IM_COL32_A_SHIFT);
+}
+
+// Blends two colours (alpha included); t in 0–1.
+ImU32 Mix(ImU32 a, ImU32 b, float t) {
+    t = std::clamp(t, 0.f, 1.f);
+    auto ch = [&](int shift) {
+        const float x = static_cast<float>((a >> shift) & 0xFF);
+        const float y = static_cast<float>((b >> shift) & 0xFF);
+        return static_cast<ImU32>(x + (y - x) * t + 0.5f) << shift;
+    };
+    return ch(IM_COL32_R_SHIFT) | ch(IM_COL32_G_SHIFT) | ch(IM_COL32_B_SHIFT) | ch(IM_COL32_A_SHIFT);
+}
+
+// Top-to-bottom gradient colour at height y, with an optional middle stop.
+ImU32 VGrad(float y, float y0, float y1, ImU32 top, ImU32 bottom) {
+    return Mix(top, bottom, (y - y0) / std::max(1.f, y1 - y0));
+}
+ImU32 VGrad3(float y, float y0, float y1, ImU32 top, ImU32 mid, ImU32 bottom) {
+    const float k = (y - y0) / std::max(1.f, y1 - y0);
+    return k < 0.5f ? Mix(top, mid, k * 2.f) : Mix(mid, bottom, k * 2.f - 1.f);
+}
+
+// Recolours the vertices added to dl since vtxStart with fn(pos).  Each
+// vertex keeps its own alpha, so anti-aliased edges stay soft.
+template <typename Fn>
+void ShadeVerts(ImDrawList* dl, int vtxStart, Fn fn) {
+    for (int i = vtxStart; i < dl->VtxBuffer.Size; ++i) {
+        ImDrawVert& v = dl->VtxBuffer[i];
+        const ImU32 c = fn(v.pos);
+        const float a = ((v.col >> IM_COL32_A_SHIFT) & 0xFF) / 255.f *
+                        ((c     >> IM_COL32_A_SHIFT) & 0xFF) / 255.f;
+        v.col = WithAlpha(c, a);
+    }
+}
+
+// Deterministic hash in [0, 1).
+float Hash(float x, float y) {
+    const float h = sinf(x * 127.1f + y * 311.7f) * 43758.5453f;
+    return h - floorf(h);
+}
+
+// Torch-light flicker in roughly [0, 1]: a few unrelated sines.
+float Flicker(float t, float seed) {
+    return 0.5f + 0.25f * sinf(t * 7.3f + seed) + 0.15f * sinf(t * 13.1f + seed * 2.1f)
+                + 0.10f * sinf(t * 23.7f + seed * 3.7f);
+}
+
+// Heavy landing: falls, then bounces to rest.
+float EaseOutBounce(float x) {
+    x = std::clamp(x, 0.f, 1.f);
+    constexpr float n = 7.5625f, d = 2.75f;
+    if (x < 1.f / d)   return n * x * x;
+    if (x < 2.f / d)   { x -= 1.5f   / d; return n * x * x + 0.75f; }
+    if (x < 2.5f / d)  { x -= 2.25f  / d; return n * x * x + 0.9375f; }
+    x -= 2.625f / d;   return n * x * x + 0.984375f;
+}
+
+// A rectangle with its corners cut off, clockwise from the top-left corner's
+// top edge.
+void Chamfer(ImVec2 a, ImVec2 b, float c, ImVec2 out[8]) {
+    out[0] = ImVec2(a.x + c, a.y);  out[1] = ImVec2(b.x - c, a.y);
+    out[2] = ImVec2(b.x, a.y + c);  out[3] = ImVec2(b.x, b.y - c);
+    out[4] = ImVec2(b.x - c, b.y);  out[5] = ImVec2(a.x + c, b.y);
+    out[6] = ImVec2(a.x, b.y - c);  out[7] = ImVec2(a.x, a.y + c);
+}
+
+// Domed bronze rivet.
+void Stud(ImDrawList* dl, ImVec2 c, float r) {
+    dl->AddCircleFilled(c, r + Sc(1.f), kShadow);
+    dl->AddCircleFilled(c, r, kBronzeLo);
+    dl->AddCircleFilled(ImVec2(c.x - r * 0.15f, c.y - r * 0.15f), r * 0.78f, kBronze);
+    dl->AddCircleFilled(ImVec2(c.x - r * 0.32f, c.y - r * 0.32f), r * 0.30f, kBronzeHi);
+}
+
+// Engraved lettering: a dark cut above-left, a light catch below-right, then
+// the fill as a top-to-bottom gradient.
+void CarvedText(ImDrawList* dl, ImFont* f, float size, ImVec2 pos, const char* text,
+                ImU32 top, ImU32 bottom) {
+    const float o = std::max(Sc(1.f), size * 0.05f);
+    dl->AddText(f, size, ImVec2(pos.x - o, pos.y - o), IM_COL32(0, 0, 0, 210), text);
+    dl->AddText(f, size, ImVec2(pos.x + o, pos.y + o), IM_COL32(255, 236, 200, 60), text);
+    const int v0 = dl->VtxBuffer.Size;
+    dl->AddText(f, size, pos, IM_COL32_WHITE, text);
+    ShadeVerts(dl, v0, [&](ImVec2 p) { return VGrad(p.y, pos.y + size * 0.15f, pos.y + size, top, bottom); });
+}
+
+// Heavy-metal title in molten gold: drop shadow, dark outline, a three-stop
+// gold gradient, and a diagonal glint that sweeps across every few seconds.
+void MoltenTitle(ImDrawList* dl, float size, ImVec2 pos, const char* text, float t) {
+    ImFont*      f  = TitleFont();
+    const ImVec2 ts = f->CalcTextSizeA(size, FLT_MAX, 0.f, text);
+    const float  o  = std::max(Sc(1.5f), size * 0.045f);
+
+    dl->AddText(f, size, ImVec2(pos.x + o * 1.5f, pos.y + o * 2.2f), IM_COL32(0, 0, 0, 170), text);
+    for (int i = 0; i < 8; ++i) {
+        const float a = i * 0.7853982f;
+        dl->AddText(f, size, ImVec2(pos.x + cosf(a) * o, pos.y + sinf(a) * o), IM_COL32(40, 18, 4, 255), text);
+    }
+    const int v0 = dl->VtxBuffer.Size;
+    dl->AddText(f, size, pos, IM_COL32_WHITE, text);
+
+    const float sweep = fmodf(t, 3.5f) / 1.2f;   // glint crosses in 1.2 s, then rests
+    const float gx    = pos.x - Sc(60.f) + sweep * (ts.x + Sc(120.f));
+    const float band  = Sc(26.f);
+    ShadeVerts(dl, v0, [&](ImVec2 p) {
+        const ImU32 base = VGrad3(p.y, pos.y + size * 0.2f, pos.y + size * 0.95f, kGoldHi, kGold, kGoldLo);
+        const float d    = fabsf(p.x + (p.y - pos.y) * 0.4f - gx);
+        return Mix(base, IM_COL32_WHITE, std::max(0.f, 1.f - d / band) * 0.85f);
+    });
+}
+
+// Riveted bronze frame filling a..b.
+void Frame(ImDrawList* dl, ImVec2 a, ImVec2 b, float thickness) {
+    const float r = Sc(6.f);
+    dl->AddRectFilled(ImVec2(a.x + Sc(10.f), a.y + Sc(14.f)), ImVec2(b.x + Sc(10.f), b.y + Sc(14.f)),
+                      IM_COL32(0, 0, 0, 140), r);
+    dl->AddRectFilled(a, b, kShadow, r);
+    const int v0 = dl->VtxBuffer.Size;
+    dl->AddRectFilled(ImVec2(a.x + Sc(2.f), a.y + Sc(2.f)), ImVec2(b.x - Sc(2.f), b.y - Sc(2.f)), IM_COL32_WHITE, r);
+    ShadeVerts(dl, v0, [&](ImVec2 p) { return VGrad3(p.y, a.y, b.y, kBronzeHi, kBronze, kBronzeLo); });
+    // Light bevel on the outer top edge, inner shadow where it meets the wall.
+    dl->AddLine(ImVec2(a.x + r, a.y + Sc(3.f)), ImVec2(b.x - r, a.y + Sc(3.f)), IM_COL32(255, 230, 170, 120), Sc(1.5f));
+    dl->AddRect(ImVec2(a.x + thickness - Sc(2.f), a.y + thickness - Sc(2.f)),
+                ImVec2(b.x - thickness + Sc(2.f), b.y - thickness + Sc(2.f)), kShadow, 0.f, 0, Sc(3.f));
+
+    // Rivets along every edge, and bigger ones on the corners.
+    const float mid = thickness * 0.5f;
+    const int   nx  = std::max(2, static_cast<int>((b.x - a.x) / Sc(64.f)));
+    const int   ny  = std::max(2, static_cast<int>((b.y - a.y) / Sc(64.f)));
+    for (int i = 1; i < nx; ++i) {
+        const float x = a.x + (b.x - a.x) * i / nx;
+        Stud(dl, ImVec2(x, a.y + mid), Sc(3.2f));
+        Stud(dl, ImVec2(x, b.y - mid), Sc(3.2f));
+    }
+    for (int i = 1; i < ny; ++i) {
+        const float y = a.y + (b.y - a.y) * i / ny;
+        Stud(dl, ImVec2(a.x + mid, y), Sc(3.2f));
+        Stud(dl, ImVec2(b.x - mid, y), Sc(3.2f));
+    }
+    Stud(dl, ImVec2(a.x + mid, a.y + mid), Sc(5.5f));
+    Stud(dl, ImVec2(b.x - mid, a.y + mid), Sc(5.5f));
+    Stud(dl, ImVec2(a.x + mid, b.y - mid), Sc(5.5f));
+    Stud(dl, ImVec2(b.x - mid, b.y - mid), Sc(5.5f));
+}
+
+// Staggered stone blocks with mortar joints, each block a slightly different
+// shade, then darkened toward the edges.
+void Wall(ImDrawList* dl, ImVec2 a, ImVec2 b) {
+    dl->AddRectFilled(a, b, kMortar);
+    const float bh = Sc(34.f), bw = Sc(74.f), gap = Sc(3.f);
+    dl->PushClipRect(a, b, true);
+    int row = 0;
+    for (float y = a.y; y < b.y; y += bh, ++row) {
+        const float off = (row % 2) ? bw * 0.5f : 0.f;
+        int col = 0;
+        for (float x = a.x - off; x < b.x; x += bw, ++col) {
+            const ImU32  c  = Mix(IM_COL32(50, 46, 56, 255), IM_COL32(80, 74, 86, 255),
+                                  Hash(static_cast<float>(col), static_cast<float>(row)));
+            const ImVec2 p0(x + gap * 0.5f, y + gap * 0.5f), p1(x + bw - gap * 0.5f, y + bh - gap * 0.5f);
+            dl->AddRectFilled(p0, p1, c, Sc(3.f));
+            dl->AddLine(ImVec2(p0.x + Sc(3.f), p0.y + Sc(1.f)), ImVec2(p1.x - Sc(3.f), p0.y + Sc(1.f)),
+                        IM_COL32(255, 255, 255, 16), Sc(1.f));
+            dl->AddLine(ImVec2(p0.x + Sc(3.f), p1.y - Sc(1.f)), ImVec2(p1.x - Sc(3.f), p1.y - Sc(1.f)),
+                        IM_COL32(0, 0, 0, 70), Sc(1.f));
+        }
+    }
+    // Vignette — the corners of the dungeon fall into darkness.
+    const float  v = Sc(90.f);
+    const ImU32  d = IM_COL32(0, 0, 0, 170), z = IM_COL32(0, 0, 0, 0);
+    dl->AddRectFilledMultiColor(a, ImVec2(b.x, a.y + v), d, d, z, z);
+    dl->AddRectFilledMultiColor(ImVec2(a.x, b.y - v), b, z, z, d, d);
+    dl->AddRectFilledMultiColor(a, ImVec2(a.x + v, b.y), d, z, z, d);
+    dl->AddRectFilledMultiColor(ImVec2(b.x - v, a.y), b, z, d, d, z);
+    dl->PopClipRect();
+}
+
+// Flame layer: a teardrop with a rounded base centred on c and its tip h
+// above, leaning by sway.  Points run clockwise, as convex fills expect.
+void Teardrop(ImDrawList* dl, ImVec2 c, float w, float h, float sway, ImU32 col) {
+    ImVec2 pts[14];
+    pts[0] = ImVec2(c.x + sway, c.y - h);
+    for (int i = 0; i <= 12; ++i) {
+        const float a = i / 12.f * 3.14159265f;
+        pts[1 + i] = ImVec2(c.x + cosf(a) * w, c.y + sinf(a) * w * 0.8f);
+    }
+    dl->AddConvexPolyFilled(pts, 14, col);
+}
+
+// Wall torch whose flame sits on `root`: warm light on the stones, a bronze
+// cup on a wooden haft, a four-layer flickering flame and rising embers.
+void Torch(ImDrawList* dl, ImVec2 root, float t, float seed) {
+    const float fl = Flicker(t, seed);
+    for (int i = 0; i < 7; ++i)
+        dl->AddCircleFilled(ImVec2(root.x, root.y - Sc(14.f)), Sc(150.f - i * 18.f) * (0.92f + 0.12f * fl),
+                            IM_COL32(255, 140, 40, 8), 48);
+
+    // Haft, iron bracket, cup.
+    dl->AddRectFilled(ImVec2(root.x - Sc(5.f), root.y + Sc(5.f)), ImVec2(root.x + Sc(5.f), root.y + Sc(36.f)), kShadow, Sc(2.f));
+    dl->AddRectFilled(ImVec2(root.x - Sc(4.f), root.y + Sc(6.f)), ImVec2(root.x + Sc(4.f), root.y + Sc(35.f)),
+                      IM_COL32(96, 60, 30, 255), Sc(2.f));
+    dl->AddRectFilled(ImVec2(root.x - Sc(9.f), root.y + Sc(19.f)), ImVec2(root.x + Sc(9.f), root.y + Sc(25.f)),
+                      IM_COL32(56, 54, 62, 255), Sc(1.f));
+    const ImVec2 cup[4] = { ImVec2(root.x - Sc(13.f), root.y - Sc(2.f)), ImVec2(root.x + Sc(13.f), root.y - Sc(2.f)),
+                            ImVec2(root.x + Sc(7.f),  root.y + Sc(10.f)), ImVec2(root.x - Sc(7.f),  root.y + Sc(10.f)) };
+    const int v0 = dl->VtxBuffer.Size;
+    dl->AddConvexPolyFilled(cup, 4, IM_COL32_WHITE);
+    ShadeVerts(dl, v0, [&](ImVec2 p) { return VGrad(p.y, root.y - Sc(2.f), root.y + Sc(10.f), kBronzeHi, kBronzeLo); });
+    dl->AddPolyline(cup, 4, kShadow, ImDrawFlags_Closed, Sc(1.5f));
+
+    // Flame, outer to inner.
+    for (int k = 0; k < 4; ++k) {
+        const float w     = Sc(12.f - k * 2.6f) * (0.9f + 0.15f * fl);
+        const float h     = Sc(34.f - k * 6.f) * (0.85f + 0.3f * Flicker(t * 1.3f, seed + k));
+        const float sway  = Sc(4.f) * sinf(t * 5.f + seed + k * 0.6f);
+        Teardrop(dl, ImVec2(root.x, root.y - Sc(4.f) - Sc(1.5f) * k), w, h, sway, kFire[k]);
+    }
+
+    // Embers drifting up and fading.
+    for (int i = 0; i < 6; ++i) {
+        const float  ph = fmodf(t * 0.55f + i * 0.173f + seed, 1.f);
+        const ImVec2 p(root.x + sinf(t * 2.f + i * 1.7f + seed) * Sc(10.f) * ph,
+                       root.y - Sc(30.f) - ph * Sc(90.f));
+        dl->AddCircleFilled(p, Sc(1.8f - ph), WithAlpha(kFire[2], (1.f - ph) * 0.9f));
+    }
+}
+
+// A sword pointing right with its tip at `tip`; len is roughly tip-to-pommel.
+void Sword(ImDrawList* dl, ImVec2 tip, float len) {
+    const float  bw     = len * 0.07f;   // blade half-width
+    const float  guardX = tip.x - len * 0.62f;
+    const ImVec2 blade[5] = { tip, ImVec2(tip.x - len * 0.1f, tip.y + bw), ImVec2(guardX, tip.y + bw),
+                              ImVec2(guardX, tip.y - bw), ImVec2(tip.x - len * 0.1f, tip.y - bw) };
+    int v0 = dl->VtxBuffer.Size;
+    dl->AddConvexPolyFilled(blade, 5, IM_COL32_WHITE);
+    ShadeVerts(dl, v0, [&](ImVec2 p) {
+        return VGrad(p.y, tip.y - bw, tip.y + bw, IM_COL32(236, 238, 246, 255), IM_COL32(118, 122, 140, 255));
+    });
+    dl->AddLine(ImVec2(guardX, tip.y), ImVec2(tip.x - len * 0.14f, tip.y), IM_COL32(90, 94, 110, 255), Sc(1.f));
+    dl->AddPolyline(blade, 5, kShadow, ImDrawFlags_Closed, Sc(1.5f));
+
+    // Grip with leather wraps, crossguard, pommel.
+    dl->AddRectFilled(ImVec2(guardX - len * 0.27f, tip.y - len * 0.045f), ImVec2(guardX, tip.y + len * 0.045f),
+                      IM_COL32(92, 40, 30, 255), Sc(1.f));
+    for (int i = 1; i < 5; ++i) {
+        const float x = guardX - len * 0.27f * i / 5.f;
+        dl->AddLine(ImVec2(x, tip.y - len * 0.045f), ImVec2(x - len * 0.02f, tip.y + len * 0.045f), kShadow, Sc(1.f));
+    }
+    const ImVec2 ga(guardX - len * 0.045f, tip.y - len * 0.17f), gb(guardX + len * 0.01f, tip.y + len * 0.17f);
+    v0 = dl->VtxBuffer.Size;
+    dl->AddRectFilled(ga, gb, IM_COL32_WHITE, Sc(2.f));
+    ShadeVerts(dl, v0, [&](ImVec2 p) { return VGrad3(p.y, ga.y, gb.y, kGoldHi, kGold, kGoldLo); });
+    dl->AddRect(ga, gb, kShadow, Sc(2.f), 0, Sc(1.2f));
+    const ImVec2 pommel(guardX - len * 0.31f, tip.y);
+    dl->AddCircleFilled(pommel, len * 0.065f + Sc(1.f), kShadow);
+    dl->AddCircleFilled(pommel, len * 0.065f, kGold);
+    dl->AddCircleFilled(ImVec2(pommel.x - len * 0.015f, pommel.y - len * 0.02f), len * 0.025f, kGoldHi);
+}
+
+// Chamfered stone tablet with engraved lettering and bronze rim.  Hovering it
+// wreathes it in purple sorcery (gold when selected) and, with `pointer`,
+// points a sword at it from the left; pressing sinks it.  True when clicked.
+bool Tablet(const char* id, const char* label, ImVec2 size, float fontSize,
+            bool selected = false, ImU32 tint = kStone, bool pointer = true) {
+    const ImVec2 pos     = ImGui::GetCursorScreenPos();
+    const bool   clicked = ImGui::InvisibleButton(id, size);
+    const bool   hovered = ImGui::IsItemHovered();
+    const bool   held    = ImGui::IsItemActive();
+    const ImGuiID iid    = ImGui::GetItemID();
+    const float  t       = static_cast<float>(ImGui::GetTime());
+
+    const float  push = held ? Sc(2.f) : 0.f;
+    const ImVec2 a(pos.x, pos.y + push), b(pos.x + size.x, pos.y + size.y + push);
+    const float  c = std::min(size.y * 0.28f, Sc(12.f));
+    ImDrawList*  dl = ImGui::GetWindowDrawList();
+    ImVec2       pts[8];
+
+    // Aura — stacked, growing translucent tablets.
+    if (hovered || selected) {
+        const float pulse = 0.75f + 0.25f * sinf(t * 5.f);
+        const ImU32 glow  = hovered ? kSorcery : kGold;
+        for (int i = 6; i >= 1; --i) {
+            const float g = Sc(2.2f) * i;
+            Chamfer(ImVec2(a.x - g, a.y - g), ImVec2(b.x + g, b.y + g), c + g * 0.6f, pts);
+            dl->AddConvexPolyFilled(pts, 8, WithAlpha(glow, 0.07f * pulse));
+        }
+    }
+    if (!held) {
+        Chamfer(ImVec2(a.x + Sc(3.f), a.y + Sc(5.f)), ImVec2(b.x + Sc(3.f), b.y + Sc(5.f)), c, pts);
+        dl->AddConvexPolyFilled(pts, 8, IM_COL32(0, 0, 0, 140));
+    }
+
+    // Face, lit from above.
+    Chamfer(a, b, c, pts);
+    const ImU32 base = held ? adv64::Shade(tint, 0.8f) : hovered ? adv64::Shade(tint, 1.18f) : tint;
+    const int   v0   = dl->VtxBuffer.Size;
+    dl->AddConvexPolyFilled(pts, 8, IM_COL32_WHITE);
+    ShadeVerts(dl, v0, [&](ImVec2 p) {
+        return VGrad(p.y, a.y, b.y, adv64::Shade(base, 1.3f), adv64::Shade(base, 0.68f));
+    });
+
+    // Chiselled bevel: light along the top and left, dark along the bottom and right.
+    {
+        ImVec2 in[8];
+        Chamfer(ImVec2(a.x + Sc(3.f), a.y + Sc(3.f)), ImVec2(b.x - Sc(3.f), b.y - Sc(3.f)),
+                std::max(0.f, c - Sc(1.5f)), in);
+        const ImVec2 lit[5]  = { in[6], in[7], in[0], in[1], in[2] };
+        const ImVec2 dark[5] = { in[2], in[3], in[4], in[5], in[6] };
+        dl->AddPolyline(lit,  5, IM_COL32(255, 248, 230, 60), 0, Sc(1.5f));
+        dl->AddPolyline(dark, 5, IM_COL32(0, 0, 0, 90),       0, Sc(1.5f));
+    }
+
+    // A crack, different on every tablet.
+    {
+        const float  h0 = (iid % 997) / 997.f, h1 = (iid % 991) / 991.f;
+        const float  cx = a.x + size.x * (0.12f + 0.76f * h0);
+        const ImVec2 crack[4] = { ImVec2(cx, a.y + Sc(1.f)),
+                                  ImVec2(cx + Sc(4.f) * (h1 - 0.5f) * 2.f, a.y + size.y * 0.18f),
+                                  ImVec2(cx - Sc(3.f), a.y + size.y * 0.30f),
+                                  ImVec2(cx + Sc(2.f), a.y + size.y * (0.38f + 0.15f * h1)) };
+        dl->AddPolyline(crack, 4, IM_COL32(0, 0, 0, 110), 0, Sc(1.2f));
+    }
+
+    dl->AddPolyline(pts, 8, selected ? kGold : kBronze, ImDrawFlags_Closed, Sc(2.5f));
+    const float my = (a.y + b.y) * 0.5f;
+    Stud(dl, ImVec2(a.x + Sc(9.f), my), Sc(2.8f));
+    Stud(dl, ImVec2(b.x - Sc(9.f), my), Sc(2.8f));
+
+    ImFont*      f  = BodyFont();
+    const ImVec2 ts = f->CalcTextSizeA(fontSize, FLT_MAX, 0.f, label);
+    const ImVec2 tp((a.x + b.x - ts.x) * 0.5f, my - ts.y * 0.52f);
+    if (hovered || selected) CarvedText(dl, f, fontSize, tp, label, kGoldHi, kGold);
+    else                     CarvedText(dl, f, fontSize, tp, label, kEngrave, IM_COL32(170, 160, 140, 255));
+
+    if (hovered && pointer)
+        Sword(dl, ImVec2(a.x - Sc(6.f) - Sc(4.f) * (0.5f + 0.5f * sinf(t * 8.f)), my), Sc(58.f));
+    return clicked;
+}
+
+// Bone skull with glowing green eyes, centred on c; u is its height scale.
+void Skull(ImDrawList* dl, ImVec2 c, float u, float t) {
+    const ImU32 bone = IM_COL32(226, 214, 186, 255), boneDark = IM_COL32(140, 126, 100, 255);
+    // Jaw, cranium, cheekbones.
+    dl->AddRectFilled(ImVec2(c.x - u * 0.30f, c.y + u * 0.02f), ImVec2(c.x + u * 0.30f, c.y + u * 0.50f), kShadow, u * 0.12f);
+    dl->AddRectFilled(ImVec2(c.x - u * 0.28f, c.y + u * 0.02f), ImVec2(c.x + u * 0.28f, c.y + u * 0.47f), boneDark, u * 0.11f);
+    dl->AddCircleFilled(ImVec2(c.x, c.y - u * 0.12f), u * 0.47f, kShadow, 32);
+    dl->AddCircleFilled(ImVec2(c.x, c.y - u * 0.12f), u * 0.45f, boneDark, 32);
+    dl->AddCircleFilled(ImVec2(c.x - u * 0.04f, c.y - u * 0.17f), u * 0.40f, bone, 32);
+    dl->AddRectFilled(ImVec2(c.x - u * 0.26f, c.y + u * 0.02f), ImVec2(c.x + u * 0.22f, c.y + u * 0.30f), bone, u * 0.08f);
+
+    // Eye sockets with a slow, pulsing glow.
+    const float g = 0.6f + 0.4f * sinf(t * 2.2f);
+    for (int side = -1; side <= 1; side += 2) {
+        const ImVec2 e(c.x + side * u * 0.18f, c.y - u * 0.06f);
+        dl->AddCircleFilled(e, u * 0.14f, kShadow, 20);
+        for (int i = 3; i >= 1; --i)
+            dl->AddCircleFilled(e, u * 0.05f * (1.f + i * 0.6f), WithAlpha(kEyeGlow, 0.12f * g), 16);
+        dl->AddCircleFilled(e, u * 0.05f, WithAlpha(kEyeGlow, 0.55f + 0.45f * g), 12);
+    }
+    // Nose and teeth.
+    dl->AddTriangleFilled(ImVec2(c.x, c.y + u * 0.08f), ImVec2(c.x - u * 0.06f, c.y + u * 0.20f),
+                          ImVec2(c.x + u * 0.06f, c.y + u * 0.20f), kShadow);
+    dl->AddLine(ImVec2(c.x - u * 0.20f, c.y + u * 0.36f), ImVec2(c.x + u * 0.20f, c.y + u * 0.36f), kShadow, Sc(1.2f));
+    for (int i = -2; i <= 2; ++i)
+        dl->AddLine(ImVec2(c.x + i * u * 0.08f, c.y + u * 0.28f), ImVec2(c.x + i * u * 0.08f, c.y + u * 0.44f),
+                    kShadow, Sc(1.2f));
+}
+
+// Iron seal riveted to a corner: bronze rim, dark iron face, carved red X.
+// Glows blood-red when hovered.  True when clicked.
+bool CloseSeal(const char* id, ImVec2 c, float r) {
+    ImGui::SetCursorScreenPos(ImVec2(c.x - r, c.y - r));
+    const bool clicked = ImGui::InvisibleButton(id, ImVec2(r * 2.f, r * 2.f));
+    const bool hovered = ImGui::IsItemHovered();
+    const bool held    = ImGui::IsItemActive();
+    const float rr     = r * (held ? 0.92f : hovered ? 1.06f : 1.f);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (hovered)
+        for (int i = 5; i >= 1; --i)
+            dl->AddCircleFilled(c, rr + Sc(2.5f) * i, WithAlpha(IM_COL32(220, 30, 30, 255), 0.08f), 32);
+    dl->AddCircleFilled(ImVec2(c.x + Sc(2.f), c.y + Sc(4.f)), rr, IM_COL32(0, 0, 0, 140), 32);
+    dl->AddCircleFilled(c, rr, kShadow, 32);
+    const int v0 = dl->VtxBuffer.Size;
+    dl->AddCircleFilled(c, rr - Sc(1.5f), IM_COL32_WHITE, 32);
+    ShadeVerts(dl, v0, [&](ImVec2 p) { return VGrad(p.y, c.y - rr, c.y + rr, kBronzeHi, kBronzeLo); });
+    dl->AddCircleFilled(c, rr * 0.70f, kShadow, 32);
+    dl->AddCircleFilled(c, rr * 0.66f, IM_COL32(48, 44, 54, 255), 32);
+    for (int i = 0; i < 6; ++i) {
+        const float a = i * 1.0471976f + 0.5235988f;
+        Stud(dl, ImVec2(c.x + cosf(a) * rr * 0.84f, c.y + sinf(a) * rr * 0.84f), Sc(1.6f));
+    }
+    const ImU32 xCol = hovered ? IM_COL32(255, 70, 60, 255) : IM_COL32(190, 30, 30, 255);
+    for (int pass = 0; pass < 2; ++pass) {
+        const float arm = rr * (pass == 0 ? 0.40f : 0.34f);
+        const float w   = rr * (pass == 0 ? 0.24f : 0.14f);
+        for (int k = 0; k < 2; ++k) {
+            const float  a = 0.7853982f + k * 1.5707963f;
+            const ImVec2 d(cosf(a) * arm, sinf(a) * arm);
+            dl->AddLine(ImVec2(c.x - d.x, c.y - d.y), ImVec2(c.x + d.x, c.y + d.y), pass == 0 ? kShadow : xCol, w);
+        }
+    }
+    return clicked;
+}
+
+} // namespace sorcery
+
+static SettingsPanel::DrawResult DrawSorcery(CRTSettings& s,
+                                             const Monitors& monitors,
+                                             HMONITOR selectedMon,
+                                             const std::vector<HMONITOR>& secondaryMons,
+                                             bool streamOpen,
+                                             const std::vector<PresetItem>& presets,
+                                             const AudioDevs& audioDevices) {
+    using namespace sorcery;
+    static int   s_page      = kMainPage;
+    static float s_pageTime  = 0.f;
+    static int   s_lastFrame = -10;
+    static float s_openTime  = 0.f;
+
+    SettingsPanel::DrawResult result;
+    const float t = static_cast<float>(ImGui::GetTime());
+
+    // Freshly opened (not drawn last frame): slam down onto the main page.
+    if (ImGui::GetFrameCount() - s_lastFrame > 1) {
+        s_openTime = t;
+        s_page     = kMainPage;
+        s_pageTime = t;
+    }
+    s_lastFrame = ImGui::GetFrameCount();
+    auto goTo = [&](int page) { s_page = page; s_pageTime = t; };
+
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float  panelW  = PanelWidth(700.f);
+    const float  panelH  = PanelHeight(700.f);
+    const float  drop    = (1.f - EaseOutBounce((t - s_openTime) / 0.6f)) * Sc(-140.f);
+    ImGui::SetNextWindowPos(ImVec2((display.x - panelW) * 0.5f, (display.y - panelH) * 0.5f + drop),
+                            ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_Always);
+
+    constexpr ImGuiWindowFlags kFlags =
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
+        ImGuiWindowFlags_NoScrollWithMouse;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(Sc(42.f), Sc(28.f)));
+    const bool visible = ImGui::Begin("##sorcery", nullptr, kFlags);
+    ImGui::PopStyleVar();
+    if (!visible) { ImGui::End(); return result; }
+
+    ImGui::PushFont(BodyFont(), 17.f);
+    ImDrawList*  dl = ImGui::GetWindowDrawList();
+    const ImVec2 wp = ImGui::GetWindowPos();
+    const ImVec2 pa = wp, pb(wp.x + panelW, wp.y + panelH);
+    const float  th = Sc(18.f);   // frame thickness
+
+    Frame(dl, pa, pb, th);
+    Wall(dl, ImVec2(pa.x + th, pa.y + th), ImVec2(pb.x - th, pb.y - th));
+    Torch(dl, ImVec2(pa.x + Sc(80.f), pa.y + Sc(72.f)), t, 0.f);
+    Torch(dl, ImVec2(pb.x - Sc(80.f), pa.y + Sc(72.f)), t, 2.7f);
+
+    // Title, shrunk if needed to fit between the torches.
+    {
+        const char* title = (s_page == kMainPage) ? "SETTINGS" : kSectionNames[s_page];
+        const float full  = Sc(56.f);
+        const float maxW  = panelW - Sc(220.f);
+        float size = full;
+        float w    = TitleFont()->CalcTextSizeA(size, FLT_MAX, 0.f, title).x;
+        if (w > maxW) { size *= maxW / w; w = maxW; }
+        MoltenTitle(dl, size, ImVec2(wp.x + (panelW - w) * 0.5f, wp.y + Sc(28.f) + (full - size) * 0.5f), title, t);
+        ImGui::Dummy(ImVec2(0.f, Sc(82.f)));
+    }
+
+    // Page content — rumbles sideways for a moment whenever the page changes.
+    const float kFooterH = Sc(64.f);
+    const float since    = t - s_pageTime;
+    if (since < 0.35f)
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + sinf(since * 70.f) * Sc(5.f) * (1.f - since / 0.35f));
+    ImGui::BeginChild("##sorcerypage", ImVec2(0.f, -kFooterH), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoBackground);
+    {
+        const float avail      = ImGui::GetContentRegionAvail().x;
+        const float kSwordRoom = Sc(70.f), kGap = Sc(74.f);   // room for the hover sword
+        const float bw         = (avail - kSwordRoom - kGap - Sc(12.f)) * 0.5f;
+        auto gridCell = [&](int i) {
+            if (i % 2 == 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kSwordRoom);
+            else            ImGui::SameLine(0.f, kGap);
+        };
+        if (s_page == kMainPage) {
+            for (int i = 0; i < kSectionCount; ++i) {
+                gridCell(i);
+                ImGui::PushID(i);
+                if (Tablet("##group", adv64::TitleCase(kSectionNames[i]).c_str(), ImVec2(bw, Sc(50.f)), Sc(19.f)))
+                    goTo(i);
+                ImGui::PopID();
+            }
+        } else if (strcmp(kSectionNames[s_page], "PRESETS") == 0) {
+            for (int i = 0; i < static_cast<int>(presets.size()); ++i) {
+                gridCell(i);
+                ImGui::PushID(i);
+                if (Tablet("##preset", presets[i].name.c_str(), ImVec2(bw, Sc(42.f)), Sc(17.f))) {
+                    result.applyPreset    = true;
+                    result.presetSettings = presets[i].settings;
+                }
+                ImGui::PopID();
+            }
+            ImGui::Dummy(ImVec2(0.f, Sc(6.f)));
+            DrawSectionContent(s_page, s, monitors, selectedMon, secondaryMons,
+                               streamOpen, presets, audioDevices, result);
+        } else if (s_page == kMenuSection) {
+            for (int i = 0; i < kStyleCount; ++i) {
+                gridCell(i);
+                ImGui::PushID(i);
+                if (Tablet("##style", kStyleNames[i], ImVec2(bw, Sc(42.f)), Sc(17.f), s.menuStyle == i))
+                    s.menuStyle = i;
+                ImGui::PopID();
+            }
+            ImGui::Dummy(ImVec2(0.f, Sc(14.f)));
+            ImGui::PushItemWidth(avail * 0.55f);
+            DrawMenuSizeControls(s);
+            ImGui::PopItemWidth();
+        } else {
+            ImGui::PushItemWidth(avail * 0.55f);
+            DrawSectionContent(s_page, s, monitors, selectedMon, secondaryMons,
+                               streamOpen, presets, audioDevices, result);
+            ImGui::PopItemWidth();
+        }
+        ImGui::Dummy(ImVec2(0.f, Sc(8.f)));   // room for the last tablet's shadow
+    }
+    ImGui::EndChild();
+
+    // Esc steps back out of a page.
+    if (s_page != kMainPage && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsAnyItemActive())
+        goTo(kMainPage);
+
+    // Footer — BACK on the left, QUIT on the right, a skull keeping watch between.
+    const float  footerY = panelH - kFooterH - Sc(2.f);
+    const float  padX    = ImGui::GetCursorStartPos().x;   // this window's padding
+    const ImVec2 fbs(Sc(132.f), Sc(40.f));
+    if (s_page != kMainPage) {
+        ImGui::SetCursorPos(ImVec2(padX, footerY));
+        if (Tablet("##back", "Back", fbs, Sc(18.f), false, kStone, false)) goTo(kMainPage);
+        Tip("Back to the main menu (Esc).");
+    }
+    ImGui::SetCursorPos(ImVec2(panelW - padX - fbs.x, footerY));
+    if (Tablet("##quit", "Quit", fbs, Sc(18.f), false, IM_COL32(112, 40, 42, 255), false)) PostQuitMessage(0);
+    Tip("Quit the overlay application entirely.");
+    Skull(dl, ImVec2(wp.x + panelW * 0.5f, wp.y + footerY + fbs.y * 0.45f), Sc(44.f), t);
+
+    // Close — an iron seal on the top-right corner of the frame.
+    ImGui::PushClipRect(pa, pb, false);
+    if (CloseSeal("##close", ImVec2(pb.x - Sc(36.f), pa.y + Sc(36.f)), Sc(22.f)))
         s.menuVisible = false;
     Tip("Close the settings panel (Ctrl+Shift+C to re-open).");
     ImGui::PopClipRect();
@@ -1966,6 +2564,7 @@ SettingsPanel::DrawResult SettingsPanel::Draw(CRTSettings& s,
         case 4:  result = DrawDOS       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
         case 5:  result = DrawVCR       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
         case 6:  result = DrawAdventure64(s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
+        case 7:  result = DrawSorcery   (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
         default: result = DrawOSD       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
     }
     style = saved;

@@ -6,4 +6,6 @@
 namespace StyleFonts {
     inline ImFont* cherryBomb  = nullptr;  // N64       — CherryBombOne-Regular.ttf, 22 px
     inline ImFont* chakraPetch = nullptr;  // Camcorder — ChakraPetch-Regular.ttf,   14 px
+    inline ImFont* metalMania  = nullptr;  // Sword & Sorcery titles — MetalMania-Regular.ttf
+    inline ImFont* cinzel      = nullptr;  // Sword & Sorcery text   — CinzelDecorative-Bold.ttf
 }

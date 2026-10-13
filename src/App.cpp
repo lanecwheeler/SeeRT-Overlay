@@ -432,6 +432,57 @@ static void ApplyAdventure64Style() {
     c[ImGuiCol_NavHighlight]         = ImVec4(1.00f, 0.77f, 0.09f, 0.80f);
 }
 
+// Sword & Sorcery — 80s barbarian-fantasy dungeon: dark stone, bronze trim,
+// gold grabs, purple sorcery on hover (see DrawSorcery).
+static void ApplySorceryStyle() {
+    ImGui::GetIO().FontGlobalScale = 1.0f;
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding    = 4.f;
+    style.ChildRounding     = 2.f;
+    style.FrameRounding     = 2.f;
+    style.GrabRounding      = 2.f;
+    style.ScrollbarRounding = 2.f;
+    style.TabRounding       = 2.f;
+    style.PopupRounding     = 3.f;
+    style.WindowBorderSize  = 2.f;
+    style.PopupBorderSize   = 2.f;
+    style.FrameBorderSize   = 1.f;
+    style.FramePadding      = ImVec2(10.f, 6.f);
+    style.ItemSpacing       = ImVec2(10.f, 11.f);
+    style.ItemInnerSpacing  = ImVec2(8.f, 6.f);
+    style.GrabMinSize       = 18.f;
+    style.ScrollbarSize     = 14.f;
+    style.WindowPadding     = ImVec2(16.f, 14.f);
+
+    ImVec4* c = style.Colors;
+    c[ImGuiCol_WindowBg]             = ImVec4(0.10f, 0.09f, 0.11f, 0.98f);
+    c[ImGuiCol_ChildBg]              = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_PopupBg]              = ImVec4(0.10f, 0.09f, 0.11f, 0.98f);
+    c[ImGuiCol_Border]               = ImVec4(0.66f, 0.44f, 0.18f, 1.00f); // bronze
+    c[ImGuiCol_BorderShadow]         = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_Text]                 = ImVec4(0.91f, 0.87f, 0.78f, 1.00f); // pale stone
+    c[ImGuiCol_TextDisabled]         = ImVec4(0.60f, 0.55f, 0.48f, 1.00f);
+    c[ImGuiCol_FrameBg]              = ImVec4(0.06f, 0.05f, 0.07f, 0.92f);
+    c[ImGuiCol_FrameBgHovered]       = ImVec4(0.17f, 0.09f, 0.22f, 0.95f); // purple sorcery
+    c[ImGuiCol_FrameBgActive]        = ImVec4(0.26f, 0.12f, 0.34f, 1.00f);
+    c[ImGuiCol_SliderGrab]           = ImVec4(0.88f, 0.64f, 0.22f, 1.00f); // gold
+    c[ImGuiCol_SliderGrabActive]     = ImVec4(1.00f, 0.84f, 0.42f, 1.00f);
+    c[ImGuiCol_CheckMark]            = ImVec4(1.00f, 0.80f, 0.32f, 1.00f);
+    c[ImGuiCol_Button]               = ImVec4(0.30f, 0.27f, 0.31f, 1.00f); // stone
+    c[ImGuiCol_ButtonHovered]        = ImVec4(0.40f, 0.21f, 0.48f, 1.00f);
+    c[ImGuiCol_ButtonActive]         = ImVec4(0.55f, 0.10f, 0.11f, 1.00f); // blood
+    c[ImGuiCol_Header]               = ImVec4(0.34f, 0.17f, 0.40f, 1.00f);
+    c[ImGuiCol_HeaderHovered]        = ImVec4(0.45f, 0.23f, 0.53f, 1.00f);
+    c[ImGuiCol_HeaderActive]         = ImVec4(0.55f, 0.29f, 0.63f, 1.00f);
+    c[ImGuiCol_Separator]            = ImVec4(0.66f, 0.44f, 0.18f, 0.60f);
+    c[ImGuiCol_ScrollbarBg]          = ImVec4(0.04f, 0.03f, 0.05f, 0.60f);
+    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.66f, 0.44f, 0.18f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.82f, 0.58f, 0.26f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(1.00f, 0.76f, 0.36f, 1.00f);
+    c[ImGuiCol_ModalWindowDimBg]     = ImVec4(0.00f, 0.00f, 0.00f, 0.45f);
+    c[ImGuiCol_NavHighlight]         = ImVec4(0.67f, 0.31f, 1.00f, 0.80f);
+}
+
 static void ApplyCamcorderStyle() {
     ImGui::GetIO().FontGlobalScale = 1.0f;
     ImGuiStyle& style = ImGui::GetStyle();
@@ -775,6 +826,8 @@ void App::InitImGui(HWND hwnd) {
         io.Fonts->AddFontDefault();
         StyleFonts::cherryBomb  = io.Fonts->AddFontFromFileTTF(ttf("CherryBombOne-Regular.ttf").c_str(), 22.f);
         StyleFonts::chakraPetch = io.Fonts->AddFontFromFileTTF(ttf("ChakraPetch-Regular.ttf").c_str(),   28.f);
+        StyleFonts::metalMania  = io.Fonts->AddFontFromFileTTF(ttf("MetalMania-Regular.ttf").c_str(),    48.f);
+        StyleFonts::cinzel      = io.Fonts->AddFontFromFileTTF(ttf("CinzelDecorative-Bold.ttf").c_str(), 20.f);
     }
 }
 
@@ -1777,6 +1830,7 @@ void App::BeginImGuiFrame() {
         case 4:  ApplyDOSStyle();         break;
         case 5:  ApplyVCRStyle();         break;
         case 6:  ApplyAdventure64Style(); break;
+        case 7:  ApplySorceryStyle();     break;
         default: ApplyCRTOSDStyle();      break;
     }
 

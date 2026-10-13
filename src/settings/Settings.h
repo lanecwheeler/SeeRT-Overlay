@@ -64,7 +64,7 @@ struct CRTSettings {
 
     // UI-only — not uploaded to the GPU constant buffer.
     // 0 = CRT OSD  1 = Simple  2 = N64  3 = Camcorder  4 = DOS Terminal  5 = VCR
-    // 6 = 64 Adventure
+    // 6 = 64 Adventure  7 = Sword & Sorcery
     int   menuStyle         = 0;
     bool  menuVisible       = false;  // toggle button hides/shows the settings panel
     float toggleX           = 20.f;   // toggle button screen position (persisted)
