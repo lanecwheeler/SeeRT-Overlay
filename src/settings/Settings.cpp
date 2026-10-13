@@ -168,6 +168,9 @@ CRTSettings Load(const fs::path& path) {
         // closed so the overlay is click-through immediately on launch.
         if (j.contains("toggleX") && j["toggleX"].is_number()) s.toggleX = j["toggleX"].get<float>();
         if (j.contains("toggleY") && j["toggleY"].is_number()) s.toggleY = j["toggleY"].get<float>();
+        if (j.contains("menuScale")  && j["menuScale"].is_number())  s.menuScale  = j["menuScale"].get<float>();
+        if (j.contains("menuWidth")  && j["menuWidth"].is_number())  s.menuWidth  = j["menuWidth"].get<float>();
+        if (j.contains("menuHeight") && j["menuHeight"].is_number()) s.menuHeight = j["menuHeight"].get<float>();
     } catch (...) {
         // Malformed file — silently return defaults.
     }
@@ -196,6 +199,9 @@ void Save(const fs::path& path, const CRTSettings& s) {
     // menuVisible NOT saved — always starts closed on next launch.
     j["toggleX"]              = s.toggleX;
     j["toggleY"]              = s.toggleY;
+    j["menuScale"]            = s.menuScale;
+    j["menuWidth"]            = s.menuWidth;
+    j["menuHeight"]           = s.menuHeight;
 
     f << j.dump(4);
 }

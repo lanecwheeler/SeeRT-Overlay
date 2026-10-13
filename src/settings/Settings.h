@@ -70,6 +70,11 @@ struct CRTSettings {
     float toggleX           = 20.f;   // toggle button screen position (persisted)
     float toggleY           = 20.f;
 
+    // Settings panel size — multipliers on each menu style's own layout.
+    float menuScale         = 1.f;    // 0.5–2  text, padding and control sizes
+    float menuWidth         = 1.f;    // 0.5–2  panel width
+    float menuHeight        = 1.f;    // 0.5–2  panel height
+
     // Cursor appearance — not uploaded to the GPU constant buffer.
     float cursorScale       = 0.44f; // render scale (fraction of source pixel size)
     float cursorThickness   = 0.f;   // dilation radius in px; 0 = no extra passes
