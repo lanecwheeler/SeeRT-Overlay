@@ -1654,14 +1654,24 @@ bool BubbleButton(const char* id, const char* label, ImVec2 size, ImU32 color,
 }
 
 // Controller-style prompt: a coloured button glyph (round for one letter, a
-// pill for words like START) followed by a label.  Returns true when clicked.
+// pill for words like START) followed by a label.
+float PromptGlyphWidth(const char* glyph, float fontSize) {
+    const float d = fontSize * 1.6f;
+    return std::max(d, TextSize(fontSize * (glyph[1] ? 0.70f : 1.0f), glyph).x + d * 0.6f);
+}
+
+float PromptWidth(const char* glyph, const char* label, float fontSize) {
+    return PromptGlyphWidth(glyph, fontSize) + Sc(10.f) + TextSize(fontSize, label).x;
+}
+
+// Draws a prompt at the cursor.  Returns true when clicked.
 bool Prompt(const char* id, const char* glyph, ImU32 color, const char* label, float fontSize) {
     const float  d   = fontSize * 1.6f;
     const float  gfs = fontSize * (glyph[1] ? 0.70f : 1.0f);
     const ImVec2 gs  = TextSize(gfs, glyph);
-    const float  gw  = std::max(d, gs.x + d * 0.6f);
+    const float  gw  = PromptGlyphWidth(glyph, fontSize);
     const ImVec2 ls  = TextSize(fontSize, label);
-    const ImVec2 size(gw + Sc(10.f) + ls.x, d);
+    const ImVec2 size(PromptWidth(glyph, label, fontSize), d);
 
     const ImVec2 pos     = ImGui::GetCursorScreenPos();
     const bool   clicked = ImGui::InvisibleButton(id, size);
@@ -1680,6 +1690,43 @@ bool Prompt(const char* id, const char* glyph, ImU32 color, const char* label, f
     CartoonText(dl, gfs, ImVec2((a.x + b.x - gs.x) * 0.5f, (a.y + b.y - gs.y) * 0.5f), kWhite, glyph);
     CartoonText(dl, fontSize, ImVec2(b.x + Sc(10.f), (a.y + b.y - ls.y) * 0.5f),
                 hovered ? kYellow : kWhite, label);
+    return clicked;
+}
+
+// Round red close button with a chunky white X, centred on c.  Wobbles and
+// tilts when hovered, squishes when pressed.  Returns true when clicked.
+bool CloseButton(const char* id, ImVec2 c, float r) {
+    ImGui::SetCursorScreenPos(ImVec2(c.x - r, c.y - r));
+    const bool  clicked = ImGui::InvisibleButton(id, ImVec2(r * 2.f, r * 2.f));
+    const bool  hovered = ImGui::IsItemHovered();
+    const bool  held    = ImGui::IsItemActive();
+    const float t       = static_cast<float>(ImGui::GetTime());
+
+    float scale = 1.f, tilt = 0.f;
+    if (held)         scale = 0.9f;
+    else if (hovered) { scale = 1.08f + 0.03f * sinf(t * 9.f); tilt = 0.25f * sinf(t * 6.f); }
+    const float rr = r * scale;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddCircleFilled(ImVec2(c.x + Sc(2.f), c.y + Sc(5.f)), rr, IM_COL32(0, 0, 0, 110));  // drop shadow
+    dl->AddCircleFilled(c, rr, Shade(kRed, 0.70f));                                          // darker lower lip
+    dl->AddCircleFilled(ImVec2(c.x, c.y - rr * 0.08f), rr * 0.92f,
+                        hovered ? Shade(kRed, 1.15f) : kRed);                                // face
+    dl->AddCircleFilled(ImVec2(c.x - rr * 0.18f, c.y - rr * 0.42f), rr * 0.36f,
+                        IM_COL32(255, 255, 255, 70));                                        // gloss
+    dl->AddCircle(c, rr, kInk, 0, Sc(3.f));
+
+    // The X: an ink stroke under a white one, rotated by the hover tilt.
+    for (int pass = 0; pass < 2; ++pass) {
+        const float  arm = pass == 0 ? rr * 0.50f : rr * 0.42f;
+        const float  w   = pass == 0 ? rr * 0.36f : rr * 0.20f;
+        const ImU32  col = pass == 0 ? kInk : kWhite;
+        for (int k = 0; k < 2; ++k) {
+            const float  a = tilt + 0.7853982f + k * 1.5707963f;
+            const ImVec2 d(cosf(a) * arm, sinf(a) * arm);
+            dl->AddLine(ImVec2(c.x - d.x, c.y - d.y), ImVec2(c.x + d.x, c.y + d.y), col, w);
+        }
+    }
     return clicked;
 }
 
@@ -1852,21 +1899,25 @@ static SettingsPanel::DrawResult DrawAdventure64(CRTSettings& s,
     if (s_page != kMainPage && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsAnyItemActive())
         goTo(kMainPage);
 
-    // Footer — controller-style prompts.
-    ImGui::SetCursorPosY(panelH - kFooterH - Sc(4.f));
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + Sc(8.f));
+    // Footer — controller-style prompts: (B) BACK on the left, (C) QUIT on the right.
+    const float footerY = panelH - kFooterH - Sc(4.f);
+    const float padX    = ImGui::GetStyle().WindowPadding.x;
     if (s_page != kMainPage) {
+        ImGui::SetCursorPos(ImVec2(padX + Sc(8.f), footerY));
         if (Prompt("##back", "B", kGreen, "BACK", Sc(20.f))) goTo(kMainPage);
         Tip("Back to the main menu (Esc).");
-        ImGui::SameLine(0.f, Sc(30.f));
     }
-    if (Prompt("##close", "START", adv64::kRed, "CLOSE", Sc(20.f))) s.menuVisible = false;
-    Tip("Hide the settings panel (Ctrl+Shift+C to re-open).");
-    if (s_page == kMainPage) {
-        ImGui::SameLine(0.f, Sc(30.f));
-        if (Prompt("##quit", "C", kYellow, "QUIT", Sc(20.f))) PostQuitMessage(0);
-        Tip("Quit the overlay application entirely.");
-    }
+    ImGui::SetCursorPos(ImVec2(panelW - padX - Sc(8.f) - PromptWidth("C", "QUIT", Sc(20.f)), footerY));
+    if (Prompt("##quit", "C", kYellow, "QUIT", Sc(20.f))) PostQuitMessage(0);
+    Tip("Quit the overlay application entirely.");
+
+    // Close — a round X button in the top-right corner, inside the gold rim.
+    // It sits in the window padding, so widen the clip rect to reach it.
+    ImGui::PushClipRect(wp, ImVec2(wp.x + panelW, wp.y + panelH), false);
+    if (CloseButton("##close", ImVec2(wp.x + panelW - Sc(48.f), wp.y + Sc(48.f)), Sc(22.f)))
+        s.menuVisible = false;
+    Tip("Close the settings panel (Ctrl+Shift+C to re-open).");
+    ImGui::PopClipRect();
 
     ImGui::PopFont();
     ImGui::End();
