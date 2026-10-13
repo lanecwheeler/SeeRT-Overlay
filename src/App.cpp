@@ -1182,8 +1182,10 @@ void App::OnUpdateChecked() {
 
 // Opens the new release's GitHub page (or the releases list) in the browser.
 void App::OpenUpdatePage() {
-    const std::wstring url = m_updateUrl.empty() ? std::wstring(UpdateCheck::ReleasesPageUrl())
-                                                 : WidenUtf8(m_updateUrl);
+    std::string page = m_updateUrl;
+    if (page.empty()) page = UpdateCheck::Latest().releaseUrl;   // result not handled yet
+    const std::wstring url = page.empty() ? std::wstring(UpdateCheck::ReleasesPageUrl())
+                                          : WidenUtf8(page);
     ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
@@ -1650,6 +1652,10 @@ void App::Tick() {
 
             if (result.pickCustomCursor)  m_pendingCursorPick = true;
             if (result.clearCustomCursor) ClearCustomCursor();
+            // The menu shows the outcome itself, so this isn't a "manual"
+            // check that pops a notification even when up to date.
+            if (result.checkForUpdates)   UpdateCheck::Start(m_outputHwnd);
+            if (result.openUpdatePage)    OpenUpdatePage();
 
             if (result.addMonitor)    AddMonitorOverlay(result.addMonitor);
             if (result.removeMonitor) {

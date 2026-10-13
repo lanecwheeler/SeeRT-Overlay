@@ -42,6 +42,10 @@ public:
         bool        pickCustomCursor  = false; // open the file picker
         bool        clearCustomCursor = false; // revert to the built-in cursor
 
+        // Updates
+        bool        checkForUpdates   = false; // start an update check now
+        bool        openUpdatePage    = false; // open the new release's page
+
         // Preset management actions from the manage modal (at most one per frame)
         enum class ManageOp { None, MoveUp, MoveDown, Delete, Rename };
         ManageOp    manageOp   = ManageOp::None;

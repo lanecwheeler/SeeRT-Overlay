@@ -1,6 +1,7 @@
 #include "SettingsPanel.h"
 #include "../settings/Presets.h"
 #include "StyleFonts.h"
+#include "../update/UpdateCheck.h"
 #include <imgui.h>
 #include <algorithm> // std::clamp
 #include <cfloat>    // FLT_MAX
@@ -28,14 +29,15 @@ static constexpr ImVec4 kSecBtnH { 0.05f, 0.65f, 0.40f, 1.00f };
 static constexpr ImVec4 kSecBtnA { 0.10f, 0.80f, 0.50f, 1.00f };
 
 // Menu styles in the order the pickers list them.  `id` is the number saved
-// as menuStyle in settings.json, so it never changes — a retired style just
-// leaves a gap (2 was the old N64 style, replaced by 64 Adventure).
+// as menuStyle in settings.json, so it never changes when the list is
+// reordered — and a retired style just leaves a gap (2 was the old N64 style,
+// replaced by 64 Adventure).
 struct MenuStyleInfo { int id; const char* name; };
 static constexpr MenuStyleInfo kStyles[] = {
-    {  0, "CRT OSD" },        {  1, "Simple" },          {  3, "Camcorder" },
-    {  4, "DOS Terminal" },   {  5, "VCR" },             {  6, "64 Adventure" },
-    {  7, "Sword & Sorcery" }, {  8, "Teletext" },       {  9, "Vector Monitor" },
-    { 10, "Arcade Service" },
+    {  8, "Teletext" },       {  6, "64 Adventure" },    {  7, "Sword & Sorcery" },
+    {  9, "Vector Monitor" }, { 10, "Arcade Service" },  {  0, "CRT OSD" },
+    {  3, "Camcorder" },      {  5, "VCR" },             {  4, "DOS Terminal" },
+    {  1, "Simple" },
 };
 static constexpr int kStyleCount = static_cast<int>(sizeof(kStyles) / sizeof(kStyles[0]));
 
@@ -49,10 +51,10 @@ static const char* StyleName(int id) {
 static const char* kSectionNames[] = {
     "CAPTURE SOURCE", "PRESETS", "GEOMETRY", "SCANLINES",
     "GLOW", "HALATION", "VIGNETTE", "FLICKER", "STATIC",
-    "SHADOW MASK", "COLOUR", "CURSOR", "STREAMING", "MENU STYLE"
+    "SHADOW MASK", "COLOUR", "CURSOR", "STREAMING", "MENU & APP"
 };
 static constexpr int kSectionCount = 14;
-static constexpr int kMenuSection  = 13;   // style switcher + panel size
+static constexpr int kMenuSection  = 13;   // menu style, panel size, version and updates
 static constexpr int kPresetsSection = 1;
 
 // Show a tooltip for the most recently drawn item, wrapped so wide fonts
@@ -542,6 +544,35 @@ static void DrawMenuSizeControls(CRTSettings& s) {
     Tip("Back to the style's normal size.");
 }
 
+// Menu & App — this build's version, the last update check's outcome, and
+// the update controls.  Kept short: it sits at the top of the section so
+// it's visible without scrolling.
+static void DrawUpdateControls(CRTSettings& s, SettingsPanel::DrawResult& result) {
+    const UpdateCheck::Result latest   = UpdateCheck::Latest();
+    const bool                checking = UpdateCheck::Running();
+    const bool                newer    = !checking && latest.status == UpdateCheck::Status::Available;
+
+    std::string line = std::string("SeeRT Overlay v") + UpdateCheck::CurrentVersion();
+    if (checking)                                            line += " - checking for updates...";
+    else if (newer)                                          line += " - v" + latest.latestVersion + " is available!";
+    else if (latest.status == UpdateCheck::Status::UpToDate) line += " - up to date";
+    else if (latest.status == UpdateCheck::Status::Failed)   line += " - couldn't reach GitHub";
+    ImGui::TextWrapped("%s", line.c_str());
+
+    if (checking) ImGui::BeginDisabled();
+    if (ImGui::Button("Check for updates##update")) result.checkForUpdates = true;
+    if (checking) ImGui::EndDisabled();
+    Tip("Asks GitHub for the latest release now.");
+    if (newer) {
+        ImGui::SameLine();
+        if (ImGui::Button("Download update##update")) result.openUpdatePage = true;
+        Tip("Opens the release page on GitHub.");
+    }
+    ImGui::Checkbox("Check for updates on launch", &s.checkForUpdates);
+    Tip("Asks GitHub whether a newer release is out each time the app starts.");
+    ImGui::Spacing();
+}
+
 // ---------------------------------------------------------------------------
 // Shared settings body — called by every themed draw function.
 // SecFn must be callable as void(const char* label).
@@ -704,7 +735,8 @@ static void DrawSettingsBody(
         ImGui::PopStyleColor(3);
     }
 
-    Sec("MENU STYLE");
+    Sec("MENU & APP");
+    DrawUpdateControls(s, result);
     DrawStyleCombo(s);
     DrawMenuSizeControls(s);
 }
@@ -937,6 +969,7 @@ static void DrawSectionContent(
         }
         break;
     case kMenuSection:
+        DrawUpdateControls(s, result);
         DrawStyleCombo(s);
         DrawMenuSizeControls(s);
         break;
@@ -1424,7 +1457,8 @@ static SettingsPanel::DrawResult DrawDefault(CRTSettings& s,
         }
     }
 
-    if (ImGui::CollapsingHeader("Menu Style", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader("Menu & App", ImGuiTreeNodeFlags_DefaultOpen)) {
+        DrawUpdateControls(s, result);
         DrawStyleCombo(s);
         DrawMenuSizeControls(s);
     }
@@ -1709,7 +1743,10 @@ static SettingsPanel::DrawResult DrawPagedMenu(PagedMenuStyle& st, const char* w
             DrawSectionContent(st.page, s, monitors, selectedMon, secondaryMons,
                                streamOpen, presets, audioDevices, result);
         } else if (st.page == kMenuSection) {
-            // Styles as a grid of buttons, then the panel-size sliders.
+            // Version and updates, then the styles as a grid of buttons, then
+            // the panel-size sliders.
+            DrawUpdateControls(s, result);
+            ImGui::Dummy(ImVec2(0.f, Sc(6.f)));
             for (int i = 0; i < kStyleCount; ++i) {
                 gridCell(i);
                 ImGui::PushID(i);
@@ -3213,7 +3250,7 @@ SettingsPanel::DrawResult SettingsPanel::Draw(CRTSettings& s,
                                                const std::vector<AudioDevEntry>& audioDevices,
                                                const CursorInfo& cursor) {
     if (!s.menuVisible) return {};
-    if (!StyleName(s.menuStyle)) s.menuStyle = 0;   // unknown or retired id
+    if (!StyleName(s.menuStyle)) s.menuStyle = CRTSettings{}.menuStyle;   // unknown or retired id
     s_cursorInfo = &cursor;
 
     // Menu size.  While a size slider is being dragged keep last frame's
