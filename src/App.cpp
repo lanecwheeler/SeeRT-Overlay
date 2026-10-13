@@ -1462,6 +1462,17 @@ void App::Tick() {
                     else if (selWnd) SetStreamCaptureTarget(selWnd);
                 }
             }
+
+            // A text field is active, so keystrokes must reach this window.
+            // The overlay is WS_EX_NOACTIVATE, so clicking it never activates
+            // it, and the SetForegroundWindow in ToggleMenu can be refused by
+            // the foreground lock (or undone if the game grabs focus back).
+            // The click into the field makes us the last-input process, which
+            // lets this call succeed.  Limited to text entry so we don't fight
+            // the game for focus the rest of the time the menu is open.
+            if (m_settings.menuVisible && ImGui::GetIO().WantTextInput
+                    && GetForegroundWindow() != m_outputHwnd)
+                SetForegroundWindow(m_outputHwnd);
         }
 
         // Welcome popup — shown once on launch, dismissed by the user.
