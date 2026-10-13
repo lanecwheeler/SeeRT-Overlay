@@ -356,6 +356,10 @@ static void DrawCustomCursorControls(CRTSettings& s, SettingsPanel::DrawResult& 
     if (!ci.error.empty())
         ImGui::TextColored(kRedA, "%s", ci.error.c_str());
 
+    ImGui::Checkbox("Show click point##cur", &s.cursorShowHotspot);
+    Tip("Draws a small dot exactly where clicks land — handy for lining up\n"
+        "a custom image's tip using the Hotspot X / Y sliders.");
+
     if (ci.custom && ci.texW > 0 && ci.texH > 0) {
         ImGui::SliderInt("Hotspot X##cur", &s.customCursorHotX, 0, ci.texW - 1);
         Tip("Horizontal position, in image pixels, of the point that clicks.");

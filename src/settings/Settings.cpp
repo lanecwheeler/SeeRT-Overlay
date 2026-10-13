@@ -65,6 +65,7 @@ void VisualToJson(const CRTSettings& s, json& j) {
     j["cursorAutoHide"]      = s.cursorAutoHide;
     j["cursorStroke"]        = s.cursorStroke;
     j["cursorPlain"]         = s.cursorPlain;
+    j["cursorShowHotspot"]   = s.cursorShowHotspot;
 }
 
 void VisualFromJson(const json& j, CRTSettings& s) {
@@ -111,6 +112,7 @@ void VisualFromJson(const json& j, CRTSettings& s) {
     getB("cursorAutoHide",      s.cursorAutoHide);
     getB("cursorStroke",        s.cursorStroke);
     getB("cursorPlain",         s.cursorPlain);
+    getB("cursorShowHotspot",   s.cursorShowHotspot);
 }
 
 CRTSettings Load(const fs::path& path) {

@@ -676,6 +676,7 @@ bool App::Init(HWND hwnd) {
     m_cursorHidden = true;
 
     ReloadCursor();
+    CreateHotspotMarker();
 
     m_monitorPicker.Refresh();
 
@@ -952,6 +953,45 @@ void App::ReloadCursor() {
     } else {
         m_cursorError = error;
     }
+}
+
+// Builds the click-point marker: a small anti-aliased red dot with a dark
+// rim, so it reads against both the cursor image and any background.  It is a
+// texture (rather than ImGui shapes) so secondary overlays can draw it too.
+void App::CreateHotspotMarker() {
+    constexpr int   N      = kHotspotMarkerSize;
+    constexpr float c      = N * 0.5f;    // centre, in pixel-edge coordinates
+    constexpr float outerR = c;           // rim edge
+    constexpr float innerR = c - 1.5f;    // red fill edge
+    std::vector<BYTE> px(N * N * 4);
+    for (int y = 0; y < N; ++y) {
+        for (int x = 0; x < N; ++x) {
+            const float dx = x + 0.5f - c, dy = y + 0.5f - c;
+            const float d  = sqrtf(dx * dx + dy * dy);
+            const float a  = std::clamp(outerR - d + 0.5f, 0.f, 1.f); // coverage
+            const float t  = std::clamp(innerR - d + 0.5f, 0.f, 1.f); // red vs rim
+            BYTE* p = &px[(y * N + x) * 4];                           // BGRA, straight alpha
+            p[0] = static_cast<BYTE>(20.f  * t);
+            p[1] = static_cast<BYTE>(20.f  * t);
+            p[2] = static_cast<BYTE>(255.f * t);
+            p[3] = static_cast<BYTE>(255.f * a);
+        }
+    }
+
+    D3D11_TEXTURE2D_DESC td = {};
+    td.Width = td.Height = N;
+    td.MipLevels  = 1;
+    td.ArraySize  = 1;
+    td.Format     = DXGI_FORMAT_B8G8R8A8_UNORM;
+    td.SampleDesc = { 1, 0 };
+    td.Usage      = D3D11_USAGE_IMMUTABLE;
+    td.BindFlags  = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA srd = { px.data(), N * 4, 0 };
+
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
+    if (FAILED(m_device->CreateTexture2D(&td, &srd, &tex)) ||
+        FAILED(m_device->CreateShaderResourceView(tex.Get(), nullptr, &m_hotspotMarkerSRV)))
+        OutputDebugStringA("App: failed to create click-point marker texture\n");
 }
 
 // Scale to draw the active cursor image at.  Custom images are normalised to
@@ -1538,6 +1578,15 @@ void App::Tick() {
                 cs.cursorThickness,
                 toU32(cs.cursorR, cs.cursorG, cs.cursorB),
                 cs.cursorStroke);
+
+            // Click-point marker, centred on the exact hotspot.
+            if (cs.cursorShowHotspot && m_hotspotMarkerSRV) {
+                constexpr float h = kHotspotMarkerSize * 0.5f;
+                ImGui::GetForegroundDrawList()->AddImage(
+                    (ImTextureID)(void*)m_hotspotMarkerSRV.Get(),
+                    ImVec2(m_rawCursorX - h, m_rawCursorY - h),
+                    ImVec2(m_rawCursorX + h, m_rawCursorY + h));
+            }
         }
 
         ImGui::Render();
@@ -1573,22 +1622,27 @@ void App::Tick() {
         if (s->currentFrame)
             secTex = s->capture.GetFrameTexture(s->currentFrame);
 
-        // Draw cursor sprite if the mouse is on this monitor.
-        ID3D11ShaderResourceView* secCursorSRV = nullptr;
-        float secCursorX = 0.f, secCursorY = 0.f;
+        // Cursor (and click-point marker) sprites if the mouse is on this monitor.
+        D3DRenderer::Sprite sprites[2];
+        int spriteCount = 0;
         if (showSecondaryCursor &&
             MonitorFromPoint(globalCursor, MONITOR_DEFAULTTONEAREST) == s->hmon) {
             MONITORINFO mi = {}; mi.cbSize = sizeof(mi);
             GetMonitorInfoW(s->hmon, &mi);
-            secCursorSRV = m_cursorSRV.Get();
-            secCursorX   = static_cast<float>(globalCursor.x - mi.rcMonitor.left);
-            secCursorY   = static_cast<float>(globalCursor.y - mi.rcMonitor.top);
+            const float x = static_cast<float>(globalCursor.x - mi.rcMonitor.left);
+            const float y = static_cast<float>(globalCursor.y - mi.rcMonitor.top);
+
+            sprites[spriteCount++] = { m_cursorSRV.Get(), x, y,
+                m_cursorTexW, m_cursorTexH, cursorDrawScale, cursorHot.x, cursorHot.y };
+            if (m_settings.cursorShowHotspot && m_hotspotMarkerSRV) {
+                constexpr float h = kHotspotMarkerSize * 0.5f;
+                sprites[spriteCount++] = { m_hotspotMarkerSRV.Get(), x, y,
+                    kHotspotMarkerSize, kHotspotMarkerSize, 1.f, h, h };
+            }
         }
 
         s->renderer.RenderFrame(secTex, m_settings, nullptr, nullptr,
-            secCursorSRV, secCursorX, secCursorY,
-            m_cursorTexW, m_cursorTexH, cursorDrawScale,
-            cursorHot.x, cursorHot.y);
+                                sprites, spriteCount);
     }
 }
 

@@ -58,6 +58,7 @@ struct CRTSettings {
     bool  cursorAutoHide    = false; // hide cursor when menu closed; shake mouse to reveal
     bool  cursorStroke      = false; // draw a black shadow offset (+5, +5) behind
     bool  cursorPlain       = false; // use fallback cursor
+    bool  cursorShowHotspot = false; // draw a small dot at the exact click point
 
     // Custom cursor image — UTF-8 path to the user's copy in
     // %APPDATA%\SeeRT Overlay\cursors.  Empty = built-in cursor.png.

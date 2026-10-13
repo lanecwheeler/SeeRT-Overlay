@@ -418,10 +418,7 @@ ID3D11ShaderResourceView* D3DRenderer::GetOrBuildCaptureSRV(ID3D11Texture2D* tex
 // ---------------------------------------------------------------------------
 void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& settings,
                               ID3D11Texture2D* streamTex, ImDrawData* imguiDrawData,
-                              ID3D11ShaderResourceView* cursorSRV,
-                              float cursorX, float cursorY,
-                              int cursorTexW, int cursorTexH, float cursorScale,
-                              float cursorHotX, float cursorHotY) {
+                              const Sprite* sprites, int spriteCount) {
     // Retry a resize that failed earlier (WM_SIZE won't fire again on its own).
     if (m_pendingWidth > 0 && m_pendingHeight > 0)
         Resize(m_pendingWidth, m_pendingHeight);
@@ -525,48 +522,10 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
     if (imguiDrawData)
         ImGui_ImplDX11_RenderDrawData(imguiDrawData);
 
-    // Cursor sprite — drawn into the intermediate RT so it is CRT-filtered.
-    // Used by secondary overlays that have no ImGui context.
-    if (cursorSRV && cursorTexW > 0 && cursorTexH > 0 && m_spriteVS && m_spriteCBuf) {
-        // Subtract the hotspot (in texture pixels) so the click point sits
-        // exactly at (cursorX, cursorY).
-        const float hotX = cursorHotX * cursorScale;
-        const float hotY = cursorHotY * cursorScale;
-        const float left = cursorX - hotX;
-        const float top  = cursorY - hotY;
-        const float right  = left + cursorTexW * cursorScale;
-        const float bottom = top  + cursorTexH * cursorScale;
-        // Convert pixel coords to NDC (x: [-1,1] right; y: [-1,1] up).
-        const float W = static_cast<float>(m_width);
-        const float H = static_cast<float>(m_height);
-        struct SpriteCB { float tlX, tlY, brX, brY; } scb;
-        scb.tlX =  left  / W * 2.f - 1.f;
-        scb.tlY = -(top    / H * 2.f - 1.f); // invert Y: screen-down → NDC-up
-        scb.brX =  right  / W * 2.f - 1.f;
-        scb.brY = -(bottom / H * 2.f - 1.f);
-
-        D3D11_MAPPED_SUBRESOURCE mapped = {};
-        if (SUCCEEDED(m_context->Map(m_spriteCBuf.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-            memcpy(mapped.pData, &scb, sizeof(scb));
-            m_context->Unmap(m_spriteCBuf.Get(), 0);
-        }
-
-        const float kBlendFactor[4] = {};
-        m_context->OMSetBlendState(m_alphaBlendState.Get(), kBlendFactor, 0xFFFFFFFF);
-        m_context->VSSetShader(m_spriteVS.Get(), nullptr, 0);
-        ID3D11Buffer* scbBuf = m_spriteCBuf.Get();
-        m_context->VSSetConstantBuffers(1, 1, &scbBuf);
-        m_context->PSSetShader(m_blitPS.Get(), nullptr, 0);
-        ID3D11SamplerState* samp = m_sampler.Get();
-        m_context->PSSetSamplers(0, 1, &samp);
-        m_context->PSSetShaderResources(0, 1, &cursorSRV);
-        m_context->Draw(6, 0);
-
-        // Restore state.
-        ID3D11ShaderResourceView* nullSRV = nullptr;
-        m_context->PSSetShaderResources(0, 1, &nullSRV);
-        m_context->OMSetBlendState(nullptr, kBlendFactor, 0xFFFFFFFF);
-    }
+    // Sprites (cursor, click-point marker) — drawn into the intermediate RT so
+    // they are CRT-filtered.  Used by secondary overlays that have no ImGui context.
+    for (int i = 0; i < spriteCount; ++i)
+        DrawSprite(sprites[i]);
 
     // Unbind the intermediate RTV so it can be read as SRV in pass 2.
     m_context->OMSetRenderTargets(0, nullptr, nullptr);
@@ -601,6 +560,50 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
     }
 
     m_swapChain->Present(1, 0); // vsync on main
+}
+
+// ---------------------------------------------------------------------------
+// DrawSprite — alpha-blends a textured quad into the currently bound RT, with
+// texture pixel (hotX, hotY) placed at window pixel (x, y).
+// ---------------------------------------------------------------------------
+void D3DRenderer::DrawSprite(const Sprite& sp) {
+    if (!sp.srv || sp.texW <= 0 || sp.texH <= 0 || !m_spriteVS || !m_spriteCBuf) return;
+
+    const float left   = sp.x - sp.hotX * sp.scale;
+    const float top    = sp.y - sp.hotY * sp.scale;
+    const float right  = left + sp.texW * sp.scale;
+    const float bottom = top  + sp.texH * sp.scale;
+    // Convert pixel coords to NDC (x: [-1,1] right; y: [-1,1] up).
+    const float W = static_cast<float>(m_width);
+    const float H = static_cast<float>(m_height);
+    struct SpriteCB { float tlX, tlY, brX, brY; } scb;
+    scb.tlX =  left  / W * 2.f - 1.f;
+    scb.tlY = -(top    / H * 2.f - 1.f); // invert Y: screen-down → NDC-up
+    scb.brX =  right  / W * 2.f - 1.f;
+    scb.brY = -(bottom / H * 2.f - 1.f);
+
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    if (SUCCEEDED(m_context->Map(m_spriteCBuf.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        memcpy(mapped.pData, &scb, sizeof(scb));
+        m_context->Unmap(m_spriteCBuf.Get(), 0);
+    }
+
+    const float kBlendFactor[4] = {};
+    m_context->OMSetBlendState(m_alphaBlendState.Get(), kBlendFactor, 0xFFFFFFFF);
+    m_context->VSSetShader(m_spriteVS.Get(), nullptr, 0);
+    ID3D11Buffer* scbBuf = m_spriteCBuf.Get();
+    m_context->VSSetConstantBuffers(1, 1, &scbBuf);
+    m_context->PSSetShader(m_blitPS.Get(), nullptr, 0);
+    ID3D11SamplerState* samp = m_sampler.Get();
+    m_context->PSSetSamplers(0, 1, &samp);
+    ID3D11ShaderResourceView* srv = sp.srv;
+    m_context->PSSetShaderResources(0, 1, &srv);
+    m_context->Draw(6, 0);
+
+    // Restore state.
+    ID3D11ShaderResourceView* nullSRV = nullptr;
+    m_context->PSSetShaderResources(0, 1, &nullSRV);
+    m_context->OMSetBlendState(nullptr, kBlendFactor, 0xFFFFFFFF);
 }
 
 // ---------------------------------------------------------------------------

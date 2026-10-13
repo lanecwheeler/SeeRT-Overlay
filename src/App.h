@@ -151,6 +151,12 @@ private:
     bool m_pendingCursorPick  = false; // open the file dialog at the start of the next Tick
     bool m_modalDialogOpen    = false; // file dialog up — ignore hotkey / tray re-entry
 
+    // Click-point marker — small dot drawn at the cursor hotspot when
+    // cursorShowHotspot is on.  Fixed on-screen size, independent of cursor scale.
+    static constexpr int kHotspotMarkerSize = 9;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_hotspotMarkerSRV;
+    void   CreateHotspotMarker();
+
     void   ReloadCursor();
     void   PickCustomCursor();
     void   ImportCustomCursor(const std::filesystem::path& src);
