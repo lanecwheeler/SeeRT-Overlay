@@ -134,6 +134,36 @@ float2 TexSize() {
     return float2(w, h);
 }
 
+// Cubic B-spline sampling from four bilinear taps (GPU Gems 2, ch. 20).
+// Used to enlarge the low-resolution glow and halation buffers: plain
+// bilinear enlargement creases at every source texel, which shows as a faint
+// grid / stair-steps in smooth glow; the B-spline is smooth across texels.
+float3 SampleBSpline(Texture2D tex, float2 uv) {
+    float2 size;
+    tex.GetDimensions(size.x, size.y);
+    float2 st = uv * size - 0.5;
+    float2 i  = floor(st);
+    float2 f  = st - i;
+    float2 f2 = f * f;
+    float2 f3 = f2 * f;
+
+    float2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+    float2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+    float2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+    float2 w3 = f3 / 6.0;
+
+    // Each bilinear tap blends two texels in the right ratio.
+    float2 g0 = w0 + w1;
+    float2 g1 = w2 + w3;
+    float2 p0 = (i - 1.0 + w1 / g0 + 0.5) / size;
+    float2 p1 = (i + 1.0 + w3 / g1 + 0.5) / size;
+
+    return g0.y * (g0.x * tex.Sample(gLinearClamp, float2(p0.x, p0.y)).rgb +
+                   g1.x * tex.Sample(gLinearClamp, float2(p1.x, p0.y)).rgb)
+         + g1.y * (g0.x * tex.Sample(gLinearClamp, float2(p0.x, p1.y)).rgb +
+                   g1.x * tex.Sample(gLinearClamp, float2(p1.x, p1.y)).rgb);
+}
+
 // Signal → light with the tube's gamma; light → signal with the monitor's.
 float3 ToLinear(float3 c) { return pow(max(c, 0.0001), crtGamma); }
 float3 ToGamma (float3 c) { return pow(max(c, 0.0001), 1.0 / displayGamma); }
@@ -328,16 +358,25 @@ float4 PS_Composite(VS_Output input) : SV_TARGET {
 }
 
 // ---------------------------------------------------------------------------
-// Glow source: decode to linear light and box-filter to 1/4 size.  Four
-// bilinear taps one source texel off-centre average a 4×4 block.
+// Glow source: decode to linear light and box-filter to 1/4 size.
+//
+// Each of the 16 texels is decoded *before* averaging.  Bilinear taps would
+// average in signal space first, and because gamma is non-linear that loses
+// light unevenly — a small bright detail glowed up to ~7× less when it
+// straddled tap footprints than when it fit inside one, showing the 4-pixel
+// block grid in the glow.
 // ---------------------------------------------------------------------------
 float4 PS_GlowDown(VS_Output input) : SV_TARGET {
-    float2 t = 1.0 / TexSize();
-    float3 c = ToLinear(gCaptureTexture.Sample(gLinearClamp, input.uv + float2(-t.x, -t.y)).rgb)
-             + ToLinear(gCaptureTexture.Sample(gLinearClamp, input.uv + float2( t.x, -t.y)).rgb)
-             + ToLinear(gCaptureTexture.Sample(gLinearClamp, input.uv + float2(-t.x,  t.y)).rgb)
-             + ToLinear(gCaptureTexture.Sample(gLinearClamp, input.uv + float2( t.x,  t.y)).rgb);
-    return float4(c * 0.25, 1.0);
+    int2   maxTexel = int2(TexSize()) - 1;
+    int2   base     = int2(input.pos.xy) * 4;   // this 1/4-size pixel's 4×4 block
+    float3 c        = float3(0, 0, 0);
+    [unroll]
+    for (int y = 0; y < 4; y++) {
+        [unroll]
+        for (int x = 0; x < 4; x++)
+            c += ToLinear(gCaptureTexture.Load(int3(min(base + int2(x, y), maxTexel), 0)).rgb);
+    }
+    return float4(c / 16.0, 1.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -522,9 +561,12 @@ float4 PS_Main(VS_Output input) : SV_TARGET {
 
     // 4. Glow and halation (pre-blurred linear light) fill the gaps between
     //    lines before the mask is applied.
-    float3 glow = gGlowTexture.Sample(gLinearClamp, uv).rgb * glowStrength    * kGlowGain;
-    float3 halo = gHaloTexture.Sample(gLinearClamp, uv).rgb * diffuseStrength * kHaloGain;
-    col += GradeLight(glow + halo);
+    float3 light = float3(0, 0, 0);
+    if (glowStrength > 0.001)
+        light += SampleBSpline(gGlowTexture, uv) * glowStrength * kGlowGain;
+    if (diffuseStrength > 0.001)
+        light += SampleBSpline(gHaloTexture, uv) * diffuseStrength * kHaloGain;
+    col += GradeLight(light);
 
     // 5. Phosphor mask — sub-pixel phosphor geometry.
     col *= ShadowMask(input.pos.xy);
