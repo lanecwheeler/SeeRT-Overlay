@@ -113,6 +113,20 @@ on youtube for the gameplay I got my screenshots from!)
 
 Dependencies (`imgui`, `nlohmann-json`) are installed automatically from `vcpkg.json` during the configure step — no manual `vcpkg install` needed.
 
+## Releasing
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`):
+
+1. Set the new version in `CMakeLists.txt` — `project(SeeRTOverlay VERSION 1.2.0 ...)` — and commit it.
+2. Tag that commit with the same version and push the tag:
+   ```bash
+   git tag v1.2.0
+   git push origin v1.2.0
+   ```
+3. The workflow builds the app, packages `SeeRT-Overlay-v1.2.0-win64.zip` with its SHA-256, and creates a **draft** release. Review it on GitHub and press **Publish** — the in-app update check only sees published releases.
+
+The workflow refuses to release if the tag and the version in `CMakeLists.txt` differ, since the update check compares the two. To package locally, run `powershell -ExecutionPolicy Bypass -File tools\package-release.ps1` after building (output goes to `dist\`).
+
 ## Tech Stack
 
 | Layer | Technology |

@@ -1,6 +1,8 @@
 # Build output
 build/
 out/
+# Release zips from tools/package-release.ps1
+dist/
 
 # vcpkg installed packages (regenerated from vcpkg.json on first cmake run)
 vcpkg_installed/

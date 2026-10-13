@@ -1,0 +1,73 @@
+# Builds SeeRT Overlay and drafts a GitHub release when a version tag is pushed.
+#
+#   1. Set the version in CMakeLists.txt — project(SeeRTOverlay VERSION 1.2.0 ...)
+#   2. Commit, then tag and push:   git tag v1.2.0 && git push origin v1.2.0
+#   3. This workflow builds, packages and creates a *draft* release with the
+#      zip and its SHA-256.  Check it over on GitHub, then press Publish —
+#      only published releases are seen by the app's update check.
+#
+# It can also be run by hand (Actions → Release → Run workflow) to test a
+# build: that uploads the zip as a workflow artifact and creates no release.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create the release
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The update check compares the release tag with the version built into
+      # the app, so the two must agree.
+      - name: Check the tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $cmake = Get-Content CMakeLists.txt -Raw
+          if ($cmake -notmatch 'project\(SeeRTOverlay VERSION (\d+\.\d+\.\d+)') { throw 'No version in CMakeLists.txt' }
+          $expected = "v$($Matches[1])"
+          if ($env:TAG -ne $expected) {
+            throw "Tag $env:TAG doesn't match CMakeLists.txt ($expected). Fix one, delete the tag and push again."
+          }
+
+      - name: Configure
+        shell: pwsh
+        run: cmake --preset default
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build --preset default
+
+      - name: Package
+        id: package
+        shell: pwsh
+        run: ./tools/package-release.ps1
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SeeRT-Overlay-v${{ steps.package.outputs.version }}-win64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+
+      - name: Draft the GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # PowerShell doesn't expand wildcards for external programs, so list the files.
+          $assets = (Get-ChildItem dist -File | Where-Object { $_.Extension -in '.zip', '.sha256' }).FullName
+          gh release create $env:TAG @assets --draft --title "SeeRT Overlay $env:TAG" --notes-file dist/release-notes.md
