@@ -1787,7 +1787,7 @@ static SettingsPanel::DrawResult DrawAdventure64(CRTSettings& s,
                     goTo(styleItem ? kStylePage : i);
                 ImGui::PopID();
             }
-        } else if (strcmp(kSectionNames[s_page], "PRESETS") == 0) {
+        } else if (s_page != kStylePage && strcmp(kSectionNames[s_page], "PRESETS") == 0) {
             // Presets as a grid of bubble buttons — like picking a course —
             // with the usual dropdown / save / manage row underneath.
             constexpr float kStarRoom = 48.f, kGap = 50.f;   // room for the hover star
