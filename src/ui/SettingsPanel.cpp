@@ -3,6 +3,11 @@
 #include "StyleFonts.h"
 #include <imgui.h>
 #include <algorithm> // std::clamp
+#include <cfloat>    // FLT_MAX
+#include <cctype>    // toupper / tolower
+#include <cmath>
+#include <cstring>   // strcmp
+#include <string>
 #include <Windows.h>
 
 // ---------------------------------------------------------------------------
@@ -22,9 +27,9 @@ static constexpr ImVec4 kSecBtnH { 0.05f, 0.65f, 0.40f, 1.00f };
 static constexpr ImVec4 kSecBtnA { 0.10f, 0.80f, 0.50f, 1.00f };
 
 static const char* kStyleNames[] = {
-    "CRT OSD", "Simple", "N64", "Camcorder", "DOS Terminal", "VCR"
+    "CRT OSD", "Simple", "N64", "Camcorder", "DOS Terminal", "VCR", "64 Adventure"
 };
-static constexpr int kStyleCount = 6;
+static constexpr int kStyleCount = 7;
 
 static const char* kSectionNames[] = {
     "CAPTURE SOURCE", "PRESETS", "GEOMETRY", "SCANLINES",
@@ -1505,6 +1510,347 @@ static SettingsPanel::DrawResult DrawDefault(CRTSettings& s,
 }
 
 // ---------------------------------------------------------------------------
+// 64 Adventure layout — a bubbly late-90s console-game menu.
+//   • Rainbow title in the classic four-colour console palette, each letter
+//     bobbing on a wave, with a chunky cartoon outline.
+//   • Main page: every settings group as a glossy colour-block button that
+//     wobbles when hovered (with a spinning star) and squishes when pressed.
+//   • Clicking a group opens a page with that group's sliders; the footer has
+//     controller-style prompts — (B) BACK, (START) CLOSE, (C) QUIT.
+//   • The panel and each page pop in with an overshooting ease.
+// ---------------------------------------------------------------------------
+namespace adv64 {
+
+constexpr ImU32 kRed    = IM_COL32(232,  44,  52, 255);
+constexpr ImU32 kYellow = IM_COL32(255, 196,  24, 255);
+constexpr ImU32 kGreen  = IM_COL32( 34, 176,  76, 255);
+constexpr ImU32 kBlue   = IM_COL32( 44,  96, 224, 255);
+constexpr ImU32 kInk    = IM_COL32( 22,  14,  44, 255);  // outlines
+constexpr ImU32 kWhite  = IM_COL32(255, 255, 255, 255);
+constexpr ImU32 kPalette[4] = { kRed, kYellow, kGreen, kBlue };
+
+constexpr int kMainPage  = -1;
+constexpr int kStylePage = 100;  // menu-style chooser (not a settings section)
+
+// Scales a colour's RGB by k (clamped), keeping alpha.
+ImU32 Shade(ImU32 c, float k) {
+    auto ch = [&](int shift) {
+        const int v = static_cast<int>(((c >> shift) & 0xFF) * k);
+        return static_cast<ImU32>(std::clamp(v, 0, 255)) << shift;
+    };
+    return ch(IM_COL32_R_SHIFT) | ch(IM_COL32_G_SHIFT) | ch(IM_COL32_B_SHIFT) | (c & IM_COL32_A_MASK);
+}
+
+ImFont* Font() { return StyleFonts::cherryBomb ? StyleFonts::cherryBomb : ImGui::GetFont(); }
+
+ImVec2 TextSize(float size, const char* text) {
+    return Font()->CalcTextSizeA(size, FLT_MAX, 0.f, text);
+}
+
+// Chunky cartoon text: soft drop shadow, ink outline, then the fill.
+void CartoonText(ImDrawList* dl, float size, ImVec2 pos, ImU32 fill, const char* text) {
+    ImFont* f = Font();
+    // Thinner outline on small text so letter counters (e.g. the gap in R)
+    // don't fill in.
+    const float o = size < 30.f ? std::max(1.2f, size * 0.055f) : size * 0.07f;
+    dl->AddText(f, size, ImVec2(pos.x + o * 1.5f, pos.y + o * 1.8f), IM_COL32(0, 0, 0, 120), text);
+    for (int i = 0; i < 8; ++i) {
+        const float a = i * 0.7853982f;
+        dl->AddText(f, size, ImVec2(pos.x + cosf(a) * o, pos.y + sinf(a) * o), kInk, text);
+    }
+    dl->AddText(f, size, pos, fill, text);
+}
+
+// Five-point star (a triangle fan, since a star is concave) with an ink rim.
+void Star(ImDrawList* dl, ImVec2 c, float r, float rot, ImU32 fill) {
+    ImVec2 pts[10];
+    for (int i = 0; i < 10; ++i) {
+        const float rr = (i % 2 == 0) ? r : r * 0.45f;
+        const float a  = rot + i * 0.6283185f - 1.5707963f;
+        pts[i] = ImVec2(c.x + cosf(a) * rr, c.y + sinf(a) * rr);
+    }
+    for (int i = 0; i < 10; ++i)
+        dl->AddTriangleFilled(c, pts[i], pts[(i + 1) % 10], fill);
+    dl->AddPolyline(pts, 10, kInk, ImDrawFlags_Closed, 2.f);
+}
+
+// "CAPTURE SOURCE" → "Capture Source".  Cherry Bomb's capital R closes up at
+// button sizes and reads as an A ("STAEAMING"), so button labels use title
+// case; the big page titles stay in capitals.
+std::string TitleCase(const char* s) {
+    std::string out(s);
+    bool wordStart = true;
+    for (char& ch : out) {
+        if (ch == ' ') { wordStart = true; continue; }
+        ch = static_cast<char>(wordStart ? toupper(static_cast<unsigned char>(ch))
+                                         : tolower(static_cast<unsigned char>(ch)));
+        wordStart = false;
+    }
+    return out;
+}
+
+// 0 → 1 with a small overshoot past 1 before settling — the "bouncy" ease.
+float EaseOutBack(float t) {
+    t = std::clamp(t, 0.f, 1.f);
+    constexpr float c1 = 1.70158f, c3 = c1 + 1.f;
+    return 1.f + c3 * powf(t - 1.f, 3.f) + c1 * powf(t - 1.f, 2.f);
+}
+
+// Glossy pill button.  Returns true when clicked.
+bool BubbleButton(const char* id, const char* label, ImVec2 size, ImU32 color,
+                  float fontSize, bool selected = false) {
+    const ImVec2 pos     = ImGui::GetCursorScreenPos();
+    const bool   clicked = ImGui::InvisibleButton(id, size);
+    const bool   hovered = ImGui::IsItemHovered();
+    const bool   held    = ImGui::IsItemActive();
+    const float  t       = static_cast<float>(ImGui::GetTime());
+
+    float scale = 1.f;
+    if (held)         scale = 0.95f;                          // squish
+    else if (hovered) scale = 1.05f + 0.02f * sinf(t * 9.f);  // wobble
+
+    const ImVec2 c    (pos.x + size.x * 0.5f, pos.y + size.y * 0.5f);
+    const ImVec2 half (size.x * 0.5f * scale, size.y * 0.5f * scale);
+    const ImVec2 a    (c.x - half.x, c.y - half.y);
+    const ImVec2 b    (c.x + half.x, c.y + half.y);
+    const float  r    = half.y;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(ImVec2(a.x + 2.f, a.y + 6.f), ImVec2(b.x + 2.f, b.y + 6.f),
+                      IM_COL32(0, 0, 0, 110), r);                                 // drop shadow
+    dl->AddRectFilled(a, b, Shade(color, 0.70f), r);                              // darker lower lip
+    dl->AddRectFilled(a, ImVec2(b.x, b.y - half.y * 0.22f),
+                      (hovered || selected) ? Shade(color, 1.15f) : color, r);    // face
+    dl->AddRectFilled(ImVec2(a.x + r * 0.6f, a.y + half.y * 0.18f),
+                      ImVec2(b.x - r * 0.6f, a.y + half.y * 0.80f),
+                      IM_COL32(255, 255, 255, 70), r);                            // gloss
+    dl->AddRect(a, b, kInk, r, 0, 3.f);
+
+    const float  fs = fontSize * scale;
+    const ImVec2 ts = TextSize(fs, label);
+    CartoonText(dl, fs, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.55f), kWhite, label);
+
+    if (hovered || selected)
+        Star(dl, ImVec2(a.x - size.y * 0.42f, c.y), size.y * 0.36f, t * 3.f, kYellow);
+    return clicked;
+}
+
+// Controller-style prompt: a coloured button glyph (round for one letter, a
+// pill for words like START) followed by a label.  Returns true when clicked.
+bool Prompt(const char* id, const char* glyph, ImU32 color, const char* label, float fontSize) {
+    const float  d   = fontSize * 1.6f;
+    const float  gfs = fontSize * (glyph[1] ? 0.70f : 1.0f);
+    const ImVec2 gs  = TextSize(gfs, glyph);
+    const float  gw  = std::max(d, gs.x + d * 0.6f);
+    const ImVec2 ls  = TextSize(fontSize, label);
+    const ImVec2 size(gw + 10.f + ls.x, d);
+
+    const ImVec2 pos     = ImGui::GetCursorScreenPos();
+    const bool   clicked = ImGui::InvisibleButton(id, size);
+    const bool   hovered = ImGui::IsItemHovered();
+    const float  bob     = hovered ? -2.f + sinf(static_cast<float>(ImGui::GetTime()) * 10.f) * 1.5f : 0.f;
+
+    ImDrawList*  dl = ImGui::GetWindowDrawList();
+    const ImVec2 a(pos.x, pos.y + bob);
+    const ImVec2 b(pos.x + gw, pos.y + d + bob);
+    dl->AddRectFilled(ImVec2(a.x + 1.f, a.y + 4.f), ImVec2(b.x + 1.f, b.y + 4.f), IM_COL32(0, 0, 0, 110), d * 0.5f);
+    dl->AddRectFilled(a, b, hovered ? Shade(color, 1.15f) : color, d * 0.5f);
+    dl->AddRectFilled(ImVec2(a.x + d * 0.22f, a.y + d * 0.12f),
+                      ImVec2(b.x - d * 0.22f, a.y + d * 0.46f), IM_COL32(255, 255, 255, 70), d * 0.5f);
+    dl->AddRect(a, b, kInk, d * 0.5f, 0, 2.5f);
+    CartoonText(dl, gfs, ImVec2((a.x + b.x - gs.x) * 0.5f, (a.y + b.y - gs.y) * 0.5f), kWhite, glyph);
+    CartoonText(dl, fontSize, ImVec2(b.x + 10.f, (a.y + b.y - ls.y) * 0.5f),
+                hovered ? kYellow : kWhite, label);
+    return clicked;
+}
+
+// Royal-blue panel with a gold rim, ink outline, and a slowly scrolling
+// faint checker pattern.
+void Panel(ImDrawList* dl, ImVec2 a, ImVec2 b, float t) {
+    constexpr float r = 30.f;
+    dl->AddRectFilled(ImVec2(a.x + 8.f, a.y + 12.f), ImVec2(b.x + 8.f, b.y + 12.f), IM_COL32(0, 0, 0, 120), r);
+    dl->AddRectFilled(a, b, kInk, r);
+    dl->AddRectFilled(ImVec2(a.x + 4.f, a.y + 4.f), ImVec2(b.x - 4.f, b.y - 4.f), kYellow, r - 2.f);
+    const ImVec2 ca(a.x + 12.f, a.y + 12.f), cb(b.x - 12.f, b.y - 12.f);
+    dl->AddRectFilled(ImVec2(ca.x - 2.f, ca.y - 2.f), ImVec2(cb.x + 2.f, cb.y + 2.f), kInk, r - 8.f);
+    dl->AddRectFilled(ca, cb, IM_COL32(30, 38, 128, 255), r - 10.f);
+
+    // Checker, clipped just inside the rounded corners.
+    constexpr float cell = 32.f;
+    const float scroll = fmodf(t * 12.f, cell * 2.f);
+    dl->PushClipRect(ImVec2(ca.x + 9.f, ca.y + 9.f), ImVec2(cb.x - 9.f, cb.y - 9.f), true);
+    for (float y = ca.y - cell * 2.f + scroll; y < cb.y; y += cell) {
+        for (float x = ca.x - cell * 2.f + scroll; x < cb.x; x += cell) {
+            const int ix = static_cast<int>(floorf((x - ca.x + cell * 2.f - scroll) / cell + 0.5f));
+            const int iy = static_cast<int>(floorf((y - ca.y + cell * 2.f - scroll) / cell + 0.5f));
+            if ((ix + iy) % 2 == 0)
+                dl->AddRectFilled(ImVec2(x, y), ImVec2(x + cell, y + cell), IM_COL32(255, 255, 255, 14));
+        }
+    }
+    dl->PopClipRect();
+
+    // Soft highlight across the top, like a plastic sheen.
+    dl->AddRectFilled(ImVec2(ca.x + 20.f, ca.y + 6.f), ImVec2(cb.x - 20.f, ca.y + 60.f),
+                      IM_COL32(255, 255, 255, 18), 20.f);
+}
+
+} // namespace adv64
+
+static SettingsPanel::DrawResult DrawAdventure64(CRTSettings& s,
+                                                 const Monitors& monitors,
+                                                 HMONITOR selectedMon,
+                                                 const std::vector<HMONITOR>& secondaryMons,
+                                                 bool streamOpen,
+                                                 const std::vector<PresetItem>& presets,
+                                                 const AudioDevs& audioDevices) {
+    using namespace adv64;
+    static int   s_page      = kMainPage;
+    static float s_pageTime  = 0.f;
+    static int   s_lastFrame = -10;
+    static float s_openTime  = 0.f;
+
+    SettingsPanel::DrawResult result;
+    const float t = static_cast<float>(ImGui::GetTime());
+
+    // Freshly opened (not drawn last frame): pop in on the main page.
+    if (ImGui::GetFrameCount() - s_lastFrame > 1) {
+        s_openTime = t;
+        s_page     = kMainPage;
+        s_pageTime = t;
+    }
+    s_lastFrame = ImGui::GetFrameCount();
+    auto goTo = [&](int page) { s_page = page; s_pageTime = t; };
+
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float  panelW  = 680.f;
+    const float  panelH  = std::min(690.f, display.y - 60.f);
+    const float  drop    = (1.f - EaseOutBack((t - s_openTime) / 0.45f)) * -80.f;
+    ImGui::SetNextWindowPos(ImVec2((display.x - panelW) * 0.5f, (display.y - panelH) * 0.5f + drop),
+                            ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_Always);
+
+    constexpr ImGuiWindowFlags kFlags =
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
+        ImGuiWindowFlags_NoScrollWithMouse;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(36.f, 26.f));
+    const bool visible = ImGui::Begin("##adv64", nullptr, kFlags);
+    ImGui::PopStyleVar();
+    if (!visible) { ImGui::End(); return result; }
+
+    ImGui::PushFont(Font(), 20.f);
+    ImDrawList*  dl = ImGui::GetWindowDrawList();
+    const ImVec2 wp = ImGui::GetWindowPos();
+    Panel(dl, wp, ImVec2(wp.x + panelW, wp.y + panelH), t);
+
+    // Title — every letter its own colour, bobbing on a wave.
+    {
+        const char* title = (s_page == kMainPage)  ? "SETTINGS"
+                          : (s_page == kStylePage) ? "MENU STYLE"
+                          :                          kSectionNames[s_page];
+        constexpr float size = 50.f;
+        float width = 0.f;
+        for (int i = 0; title[i]; ++i) {
+            const char ch[2] = { title[i], 0 };
+            width += TextSize(size, ch).x + 2.f;
+        }
+        float x = wp.x + (panelW - width) * 0.5f;
+        for (int i = 0; title[i]; ++i) {
+            const char ch[2] = { title[i], 0 };
+            if (ch[0] != ' ')
+                CartoonText(dl, size, ImVec2(x, wp.y + 24.f + sinf(t * 3.2f + i * 0.55f) * 4.f),
+                            kPalette[i % 4], ch);
+            x += TextSize(size, ch).x + 2.f;
+        }
+        ImGui::Dummy(ImVec2(0.f, 70.f));
+    }
+
+    // Page content, sliding up with a bounce whenever the page changes.
+    constexpr float kFooterH = 60.f;
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (1.f - EaseOutBack((t - s_pageTime) / 0.35f)) * 40.f);
+    ImGui::BeginChild("##adv64page", ImVec2(0.f, -kFooterH), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoBackground);
+    {
+        const float avail = ImGui::GetContentRegionAvail().x;
+        if (s_page == kMainPage) {
+            // Two columns of group buttons, with room on the left of each for the hover star.
+            constexpr float kStarRoom = 48.f, kGap = 50.f;   // room for the hover star
+            const float bw = (avail - kStarRoom - kGap - 12.f) * 0.5f;
+            const int   count = kSectionCount + 1;   // + MENU STYLE
+            for (int i = 0; i < count; ++i) {
+                const bool  styleItem = (i == kSectionCount);
+                const std::string label = TitleCase(styleItem ? "MENU STYLE" : kSectionNames[i]);
+                if (i % 2 == 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kStarRoom);
+                else            ImGui::SameLine(0.f, kGap);
+                ImGui::PushID(i);
+                if (BubbleButton("##group", label.c_str(), ImVec2(bw, 54.f), kPalette[(i / 2 + i) % 4], 22.f))
+                    goTo(styleItem ? kStylePage : i);
+                ImGui::PopID();
+            }
+        } else if (strcmp(kSectionNames[s_page], "PRESETS") == 0) {
+            // Presets as a grid of bubble buttons — like picking a course —
+            // with the usual dropdown / save / manage row underneath.
+            constexpr float kStarRoom = 48.f, kGap = 50.f;   // room for the hover star
+            const float bw = (avail - kStarRoom - kGap - 12.f) * 0.5f;
+            for (int i = 0; i < static_cast<int>(presets.size()); ++i) {
+                if (i % 2 == 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kStarRoom);
+                else            ImGui::SameLine(0.f, kGap);
+                ImGui::PushID(i);
+                if (BubbleButton("##preset", presets[i].name.c_str(), ImVec2(bw, 44.f),
+                                 kPalette[(i / 2 + i) % 4], 19.f)) {
+                    result.applyPreset    = true;
+                    result.presetSettings = presets[i].settings;
+                }
+                ImGui::PopID();
+            }
+            ImGui::Dummy(ImVec2(0.f, 6.f));
+            DrawSectionContent(s_page, s, monitors, selectedMon, secondaryMons,
+                               streamOpen, presets, audioDevices, result);
+        } else if (s_page == kStylePage) {
+            for (int i = 0; i < kStyleCount; ++i) {
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 70.f);
+                ImGui::PushID(i);
+                if (BubbleButton("##style", kStyleNames[i], ImVec2(avail - 140.f, 46.f),
+                                 kPalette[i % 4], 21.f, s.menuStyle == i))
+                    s.menuStyle = i;
+                ImGui::PopID();
+            }
+        } else {
+            ImGui::PushItemWidth(avail * 0.55f);
+            DrawSectionContent(s_page, s, monitors, selectedMon, secondaryMons,
+                               streamOpen, presets, audioDevices, result);
+            ImGui::PopItemWidth();
+        }
+        ImGui::Dummy(ImVec2(0.f, 8.f));   // room for the last button's shadow
+    }
+    ImGui::EndChild();
+
+    // Esc steps back out of a page, like a B press.
+    if (s_page != kMainPage && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsAnyItemActive())
+        goTo(kMainPage);
+
+    // Footer — controller-style prompts.
+    ImGui::SetCursorPosY(panelH - kFooterH - 4.f);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8.f);
+    if (s_page != kMainPage) {
+        if (Prompt("##back", "B", kGreen, "BACK", 20.f)) goTo(kMainPage);
+        Tip("Back to the main menu (Esc).");
+        ImGui::SameLine(0.f, 30.f);
+    }
+    if (Prompt("##close", "START", adv64::kRed, "CLOSE", 20.f)) s.menuVisible = false;
+    Tip("Hide the settings panel (Ctrl+Shift+C to re-open).");
+    if (s_page == kMainPage) {
+        ImGui::SameLine(0.f, 30.f);
+        if (Prompt("##quit", "C", kYellow, "QUIT", 20.f)) PostQuitMessage(0);
+        Tip("Quit the overlay application entirely.");
+    }
+
+    ImGui::PopFont();
+    ImGui::End();
+    return result;
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 SettingsPanel::DrawResult SettingsPanel::Draw(CRTSettings& s,
@@ -1524,6 +1870,7 @@ SettingsPanel::DrawResult SettingsPanel::Draw(CRTSettings& s,
         case 3:  result = DrawCamcorder (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
         case 4:  result = DrawDOS       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
         case 5:  result = DrawVCR       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
+        case 6:  result = DrawAdventure64(s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
         default: result = DrawOSD       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
     }
     s_cursorInfo = nullptr;

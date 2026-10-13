@@ -381,6 +381,57 @@ static void ApplyN64Style() {
     c[ImGuiCol_NavWindowingHighlight]= ImVec4(0.90f, 0.70f, 0.00f, 0.70f);
 }
 
+// 64 Adventure — bubbly late-90s console-game look: fat rounded pills, ink
+// outlines, royal-blue panels, gold accents (see DrawAdventure64).
+static void ApplyAdventure64Style() {
+    ImGui::GetIO().FontGlobalScale = 1.0f;
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding    = 24.f;
+    style.ChildRounding     = 16.f;
+    style.FrameRounding     = 14.f;
+    style.GrabRounding      = 14.f;
+    style.ScrollbarRounding = 14.f;
+    style.TabRounding       = 12.f;
+    style.PopupRounding     = 18.f;
+    style.WindowBorderSize  = 3.f;
+    style.PopupBorderSize   = 3.f;
+    style.FrameBorderSize   = 2.f;
+    style.FramePadding      = ImVec2(12.f, 7.f);
+    style.ItemSpacing       = ImVec2(10.f, 12.f);
+    style.ItemInnerSpacing  = ImVec2(8.f, 6.f);
+    style.GrabMinSize       = 24.f;
+    style.ScrollbarSize     = 16.f;
+    style.WindowPadding     = ImVec2(18.f, 16.f);
+
+    ImVec4* c = style.Colors;
+    c[ImGuiCol_WindowBg]             = ImVec4(0.11f, 0.14f, 0.47f, 0.97f);
+    c[ImGuiCol_ChildBg]              = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_PopupBg]              = ImVec4(0.11f, 0.14f, 0.47f, 0.98f);
+    c[ImGuiCol_Border]               = ImVec4(0.09f, 0.05f, 0.17f, 1.00f); // ink outline
+    c[ImGuiCol_BorderShadow]         = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_Text]                 = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+    c[ImGuiCol_TextDisabled]         = ImVec4(0.70f, 0.74f, 0.95f, 1.00f);
+    c[ImGuiCol_FrameBg]              = ImVec4(0.07f, 0.09f, 0.32f, 1.00f);
+    c[ImGuiCol_FrameBgHovered]       = ImVec4(0.12f, 0.16f, 0.48f, 1.00f);
+    c[ImGuiCol_FrameBgActive]        = ImVec4(0.16f, 0.22f, 0.60f, 1.00f);
+    c[ImGuiCol_SliderGrab]           = ImVec4(1.00f, 0.77f, 0.09f, 1.00f); // yellow
+    c[ImGuiCol_SliderGrabActive]     = ImVec4(1.00f, 0.88f, 0.40f, 1.00f);
+    c[ImGuiCol_CheckMark]            = ImVec4(1.00f, 0.77f, 0.09f, 1.00f);
+    c[ImGuiCol_Button]               = ImVec4(0.17f, 0.38f, 0.88f, 1.00f); // blue
+    c[ImGuiCol_ButtonHovered]        = ImVec4(0.27f, 0.50f, 1.00f, 1.00f);
+    c[ImGuiCol_ButtonActive]         = ImVec4(0.91f, 0.17f, 0.20f, 1.00f); // red
+    c[ImGuiCol_Header]               = ImVec4(0.13f, 0.69f, 0.30f, 1.00f); // green
+    c[ImGuiCol_HeaderHovered]        = ImVec4(0.20f, 0.80f, 0.38f, 1.00f);
+    c[ImGuiCol_HeaderActive]         = ImVec4(0.10f, 0.55f, 0.24f, 1.00f);
+    c[ImGuiCol_Separator]            = ImVec4(1.00f, 0.77f, 0.09f, 0.60f);
+    c[ImGuiCol_ScrollbarBg]          = ImVec4(0.05f, 0.06f, 0.25f, 0.60f);
+    c[ImGuiCol_ScrollbarGrab]        = ImVec4(1.00f, 0.77f, 0.09f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(1.00f, 0.85f, 0.30f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(1.00f, 0.92f, 0.50f, 1.00f);
+    c[ImGuiCol_ModalWindowDimBg]     = ImVec4(0.00f, 0.00f, 0.00f, 0.35f);
+    c[ImGuiCol_NavHighlight]         = ImVec4(1.00f, 0.77f, 0.09f, 0.80f);
+}
+
 static void ApplyCamcorderStyle() {
     ImGui::GetIO().FontGlobalScale = 1.0f;
     ImGuiStyle& style = ImGui::GetStyle();
@@ -1716,13 +1767,17 @@ void App::Tick() {
 // ---------------------------------------------------------------------------
 
 void App::BeginImGuiFrame() {
+    // Start every frame from ImGui's defaults, so switching menu styles never
+    // leaves sizes or colours behind that only the previous style set.
+    ImGui::GetStyle() = ImGuiStyle();
     switch (m_settings.menuStyle) {
-        case 1:  ApplyDefaultStyle();    break;
-        case 2:  ApplyN64Style();        break;
-        case 3:  ApplyCamcorderStyle();  break;
-        case 4:  ApplyDOSStyle();        break;
-        case 5:  ApplyVCRStyle();        break;
-        default: ApplyCRTOSDStyle();     break;
+        case 1:  ApplyDefaultStyle();     break;
+        case 2:  ApplyN64Style();         break;
+        case 3:  ApplyCamcorderStyle();   break;
+        case 4:  ApplyDOSStyle();         break;
+        case 5:  ApplyVCRStyle();         break;
+        case 6:  ApplyAdventure64Style(); break;
+        default: ApplyCRTOSDStyle();      break;
     }
 
     ImGui_ImplDX11_NewFrame();
