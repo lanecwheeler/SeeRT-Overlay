@@ -89,27 +89,37 @@ private:
     // filtering, and the glow / halation blur pyramids.  One chain per
     // picture source (overlay and stream), sized to that source.
     struct PostChain {
-        RenderTarget signal;   // composite-filtered picture, full size (signal space)
-        RenderTarget glow[2];  // 1/4 size, linear light — [0] holds the result
-        RenderTarget halo[2];  // 1/8 size, linear light — [0] holds the result
-        int srcW = 0, srcH = 0;
+        RenderTarget signal;     // composite-filtered picture, full size (signal space)
+        RenderTarget history[2]; // persistence ping-pong, full size, half-float signal
+        RenderTarget glow[2];    // 1/4 size, linear light — [0] holds the result
+        RenderTarget halo[2];    // 1/8 size, linear light — [0] holds the result
+        RenderTarget lumGrid;    // 64×64 luminance grid with mips down to 1×1
+        RenderTarget lum[2];     // 1×1 smoothed average luminance, ping-pong
+        int  historyCur   = 0;   // history[] slot written this frame
+        bool historyValid = false;
+        int  lumCur       = 0;
+        bool lumValid     = false;
+        int  srcW = 0, srcH = 0;
     };
-    // SRVs the CRT pass binds to t0, t2 and t3 (glow / halo null when off).
+    // SRVs the CRT pass binds to t0 and t2–t4 (null when that stage is off).
     struct PostResult {
         ID3D11ShaderResourceView* picture = nullptr;
         ID3D11ShaderResourceView* glow    = nullptr;
         ID3D11ShaderResourceView* halo    = nullptr;
+        ID3D11ShaderResourceView* avgLum  = nullptr;
     };
 
     bool LoadShaders();
     bool CreateBackBufferRTV();
     bool CreateIntermediateRT();
-    bool CreateRenderTarget(RenderTarget& rt, int w, int h, DXGI_FORMAT format);
+    bool CreateRenderTarget(RenderTarget& rt, int w, int h, DXGI_FORMAT format,
+                            bool withMips = false);
     bool EnsurePostChain(PostChain& chain, int w, int h);
     PostResult RunPostChain(PostChain& chain, ID3D11ShaderResourceView* source,
                             int w, int h, const CRTSettings& settings);
     void FullscreenPass(ID3D11PixelShader* ps, const RenderTarget& dst,
-                        ID3D11ShaderResourceView* source);
+                        ID3D11ShaderResourceView* source,
+                        ID3D11ShaderResourceView* history = nullptr);
     void BlurPass(const RenderTarget& src, const RenderTarget& dst,
                   bool horizontal, float sigmaTexels);
     void CRTPass(ID3D11RenderTargetView* rtv, int w, int h, const PostResult& post,
@@ -159,6 +169,9 @@ private:
     ComPtr<ID3D11PixelShader>          m_glowDownPS;  // linearise + 1/4 downsample
     ComPtr<ID3D11PixelShader>          m_haloDownPS;  // threshold + 1/8 downsample
     ComPtr<ID3D11PixelShader>          m_blurPS;      // separable Gaussian blur
+    ComPtr<ID3D11PixelShader>          m_persistPS;   // phosphor persistence
+    ComPtr<ID3D11PixelShader>          m_lumDownPS;   // luminance grid
+    ComPtr<ID3D11PixelShader>          m_lumSmoothPS; // smoothed average luminance
 
     PostChain                          m_mainPost;   // overlay picture
     PostChain                          m_streamPost; // stream picture

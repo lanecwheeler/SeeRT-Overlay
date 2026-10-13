@@ -18,13 +18,15 @@
 //   • Glow and halation from separable Gaussian blurs of a downsampled,
 //     linearised picture (crt-guest-advanced's glow / bloom passes).
 //   • Composite colour bleed: per-component YIQ bandwidth limits (GTU).
+//   • Phosphor persistence (guest afterglow) and raster bloom (guest BLOOM).
 //
 // Entry points: VS_Main, VS_Sprite, PS_Main (CRT), PS_Blit, and the
-// pre-passes PS_Composite, PS_GlowDown, PS_HaloDown, PS_Blur.
+// pre-passes PS_Composite, PS_Persist, PS_GlowDown, PS_HaloDown, PS_Blur,
+// PS_LumDown, PS_LumSmooth.
 
 // ---------------------------------------------------------------------------
 // Constant buffer — must match the CRTSettings C++ struct exactly.
-// 40 floats = 160 bytes (10 × 16).
+// 44 floats = 176 bytes (11 × 16).
 // ---------------------------------------------------------------------------
 cbuffer CRTParams : register(b0) {
     float curvatureX;       // 0–0.5
@@ -75,7 +77,12 @@ cbuffer CRTParams : register(b0) {
     float signalSoftness;     // 0–1  luma bandwidth limit
     float glowRadius;         // 1–30   px at 1080p (used on the CPU to size the blur)
     float halationRadius;     // 10–150 px at 1080p (used on the CPU to size the blur)
+    float persistence;        // 0–1  phosphor afterglow, 0–250 ms decay time
+
+    float rasterBloom;        // 0–1  picture grows with scene brightness
+    float frameDelta;         // seconds since the previous frame
     float shaderPad0;
+    float shaderPad1;
 };
 
 // ---------------------------------------------------------------------------
@@ -87,12 +94,22 @@ cbuffer CRTParams : register(b0) {
 //        (reads as zero) for the stream output.
 //   t2 — glow: linear light, 1/4 size, Gaussian-blurred.   Zero when off.
 //   t3 — halation: linear light above the threshold, 1/8 size, wide blur.
+//   t4 — 1×1 smoothed average scene luminance (raster bloom).  Zero when off.
+//   t5 — previous frame's history, read by the persistence / luminance
+//        pre-passes only.
 // ---------------------------------------------------------------------------
 Texture2D    gCaptureTexture : register(t0);
 Texture2D    gUITexture      : register(t1);
 Texture2D    gGlowTexture    : register(t2);
 Texture2D    gHaloTexture    : register(t3);
+Texture2D    gAvgLumTexture  : register(t4);
+Texture2D    gHistoryTexture : register(t5);
 SamplerState gLinearClamp    : register(s0);
+
+// Size of the luminance-averaging buffer (its last mip is 1×1).  Must match
+// kLumSize in D3DRenderer.cpp.
+static const float kLumSize     = 64.0;
+static const float kLumLastMip  = 6.0;
 
 // Per-pass parameters for PS_Blur.
 cbuffer BlurParams : register(b2) {
@@ -169,6 +186,17 @@ float3 ToLinear(float3 c) { return pow(max(c, 0.0001), crtGamma); }
 float3 ToGamma (float3 c) { return pow(max(c, 0.0001), 1.0 / displayGamma); }
 
 // ---------------------------------------------------------------------------
+// Raster bloom — a CRT's high-voltage supply sags on bright scenes, weakening
+// the beam's stiffness so the deflection (and the picture) grows slightly.
+// Up to 5% larger on an all-white screen at full strength.
+// ---------------------------------------------------------------------------
+float RasterScale() {
+    if (rasterBloom < 0.001) return 1.0;
+    float avgLum = gAvgLumTexture.Load(int3(0, 0, 0)).r;
+    return 1.0 + rasterBloom * 0.05 * saturate(avgLum);
+}
+
+// ---------------------------------------------------------------------------
 // Barrel / pincushion distortion.
 // ---------------------------------------------------------------------------
 float2 BarrelDistort(float2 uv) {
@@ -176,7 +204,7 @@ float2 BarrelDistort(float2 uv) {
     float r2 = c.x * c.x + c.y * c.y;
     c.x *= 1.0 + curvatureX * r2;
     c.y *= 1.0 + curvatureY * r2;
-    c /= zoom;
+    c /= zoom * RasterScale();
     return c * 0.5 + 0.5;
 }
 
@@ -355,6 +383,56 @@ float4 PS_Composite(VS_Output input) : SV_TARGET {
     yiq.y = FilterYIQ(input.uv, sigI, 1.0 / width).y;
     yiq.z = FilterYIQ(input.uv, sigQ, 1.0 / width).z;
     return float4(saturate(mul(kYIQtoRGB, yiq)), 1.0);
+}
+
+// ---------------------------------------------------------------------------
+// Phosphor persistence (after crt-guest-advanced's afterglow): each pixel
+// keeps the brighter of its new value and its previous value decayed
+// exponentially over time, so bright things leave fading trails as they
+// move while still images are unaffected.  The decay is timed by frameDelta,
+// so trails last the same at any refresh rate.  History is half-float, so
+// trails fade all the way out instead of sticking at a quantised residue.
+//
+// Values stay in signal space: decaying light by d is the same as scaling
+// the signal by d^(1/gamma), and max() is the same in either space.
+// ---------------------------------------------------------------------------
+float4 PS_Persist(VS_Output input) : SV_TARGET {
+    int3   p     = int3(input.pos.xy, 0);
+    float3 cur   = gCaptureTexture.Load(p).rgb;
+    float3 prev  = gHistoryTexture.Load(p).rgb;
+    float  tau   = max(persistence * 0.25, 0.0001);            // seconds
+    float  decay = pow(exp(-frameDelta / tau), 1.0 / crtGamma);
+    return float4(max(cur, prev * decay), 1.0);
+}
+
+// ---------------------------------------------------------------------------
+// Scene luminance for raster bloom: a 64×64 grid of linear-light luminance
+// samples (four per cell); the renderer then mip-maps it down to 1×1.
+// ---------------------------------------------------------------------------
+float4 PS_LumDown(VS_Output input) : SV_TARGET {
+    float2 sz  = TexSize();
+    float  lum = 0.0;
+    [unroll]
+    for (int y = 0; y < 2; y++) {
+        [unroll]
+        for (int x = 0; x < 2; x++) {
+            float2 uv = (floor(input.pos.xy) + (float2(x, y) + 0.5) * 0.5) / kLumSize;
+            int2   p  = min(int2(uv * sz), int2(sz) - 1);
+            lum += dot(ToLinear(gCaptureTexture.Load(int3(p, 0)).rgb), kLuma);
+        }
+    }
+    lum *= 0.25;
+    return float4(lum, lum, lum, 1.0);
+}
+
+// Temporal smoothing of the average (1×1 target): the supply responds over
+// ~150 ms, so the picture breathes rather than jitters.
+float4 PS_LumSmooth(VS_Output input) : SV_TARGET {
+    float cur   = gCaptureTexture.SampleLevel(gLinearClamp, float2(0.5, 0.5), kLumLastMip).r;
+    float prev  = gHistoryTexture.Load(int3(0, 0, 0)).r;
+    float alpha = 1.0 - exp(-frameDelta / 0.15);
+    float lum   = lerp(prev, cur, alpha);
+    return float4(lum, lum, lum, 1.0);
 }
 
 // ---------------------------------------------------------------------------

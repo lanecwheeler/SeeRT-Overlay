@@ -68,6 +68,8 @@ void VisualToJson(const CRTSettings& s, json& j) {
     j["signalSoftness"]      = s.signalSoftness;
     j["glowRadius"]          = s.glowRadius;
     j["halationRadius"]      = s.halationRadius;
+    j["persistence"]         = s.persistence;
+    j["rasterBloom"]         = s.rasterBloom;
     j["cursorScale"]         = s.cursorScale;
     j["cursorThickness"]     = s.cursorThickness;
     j["cursorR"]             = s.cursorR;
@@ -126,6 +128,8 @@ void VisualFromJson(const json& j, CRTSettings& s) {
     getF("signalSoftness",      s.signalSoftness);
     getF("glowRadius",          s.glowRadius);
     getF("halationRadius",      s.halationRadius);
+    getF("persistence",         s.persistence);
+    getF("rasterBloom",         s.rasterBloom);
     getF("cursorScale",         s.cursorScale);
     getF("cursorThickness",     s.cursorThickness);
     getF("cursorR",             s.cursorR);

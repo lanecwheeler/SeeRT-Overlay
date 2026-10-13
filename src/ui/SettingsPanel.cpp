@@ -335,9 +335,12 @@ static constexpr const char* kMaskTypeTip =
     "Magenta / Green — 2-pixel stripes; the sharpest choice at 1080p.";
 
 // GEOMETRY — after Convergence.
-static void DrawCornerControl(CRTSettings& s) {
+static void DrawGeometryExtras(CRTSettings& s) {
     ImGui::SliderFloat("Corners", &s.cornerRadius, 0.0f, 0.25f, "%.3f");
     Tip("Rounds the corners of the picture like a CRT tube, with a soft anti-aliased edge.");
+    ImGui::SliderFloat("Raster Bloom", &s.rasterBloom, 0.0f, 1.0f, "%.2f");
+    Tip("The picture swells slightly on bright scenes (up to 5%), like a CRT whose high-voltage\n"
+        "supply sags under load.  Responds smoothly over a fraction of a second.");
 }
 
 // SCANLINES — after Count.
@@ -362,9 +365,12 @@ static void DrawMaskCompensation(CRTSettings& s) {
 }
 
 // GLOW — after Strength.
-static void DrawGlowRadius(CRTSettings& s) {
+static void DrawGlowExtras(CRTSettings& s) {
     ImGui::SliderFloat("Radius##g", &s.glowRadius, 1.0f, 30.0f, "%.0f px");
     Tip("How far the glow spreads around bright areas (in pixels at 1080p; scales with resolution).");
+    ImGui::SliderFloat("Persistence##g", &s.persistence, 0.0f, 1.0f, "%.2f");
+    Tip("Phosphor afterglow — bright things leave a short fading trail as they move\n"
+        "(up to 250 ms).  Still images are unaffected.");
 }
 
 // HALATION — after Threshold.
@@ -491,7 +497,7 @@ static void DrawSettingsBody(
     Tip("Scales the image inward to fill the black corners produced by barrel distortion.");
     ImGui::SliderFloat("Convergence",  &s.convergence,      0.0f,  1.0f,   "%.2f");
     Tip("RGB channel misalignment — simulates lateral chromatic aberration from misaligned electron guns.");
-    DrawCornerControl(s);
+    DrawGeometryExtras(s);
 
     Sec("SCANLINES");
     ImGui::SliderFloat("Intensity",     &s.scanlineIntensity, 0.0f,  1.0f,   "%.2f");
@@ -510,7 +516,7 @@ static void DrawSettingsBody(
     Sec("GLOW");
     ImGui::SliderFloat("Strength##g",   &s.glowStrength,      0.0f,  2.0f,   "%.2f");
     Tip("Phosphor glow — bright areas bleed softly into their surroundings.");
-    DrawGlowRadius(s);
+    DrawGlowExtras(s);
 
     Sec("HALATION");
     ImGui::SliderFloat("Strength##d",   &s.diffuseStrength,   0.0f,  2.0f,   "%.2f");
@@ -725,7 +731,7 @@ static void DrawSectionContent(
         Tip("Scale image inward to fill barrel-distortion corners.");
         ImGui::SliderFloat("Convergence",  &s.convergence, 0.0f, 1.0f, "%.2f");
         Tip("RGB channel misalignment — lateral chromatic aberration.");
-        DrawCornerControl(s);
+        DrawGeometryExtras(s);
         break;
     case 3:
         ImGui::SliderFloat("Intensity",     &s.scanlineIntensity, 0.0f,    1.0f,   "%.2f");
@@ -743,7 +749,7 @@ static void DrawSectionContent(
     case 4:
         ImGui::SliderFloat("Strength##g", &s.glowStrength, 0.0f, 2.0f, "%.2f");
         Tip("Phosphor glow strength.");
-        DrawGlowRadius(s);
+        DrawGlowExtras(s);
         break;
     case 5:
         ImGui::SliderFloat("Strength##d",  &s.diffuseStrength,  0.0f, 2.0f, "%.2f");
@@ -1353,7 +1359,7 @@ static SettingsPanel::DrawResult DrawDefault(CRTSettings& s,
         Tip("Scales the image inward to fill the black corners produced by barrel distortion.");
         ImGui::SliderFloat("Convergence", &s.convergence, 0.0f, 1.0f, "%.2f");
         Tip("RGB channel misalignment — simulates lateral chromatic aberration from misaligned electron guns.");
-        DrawCornerControl(s);
+        DrawGeometryExtras(s);
     }
     if (ImGui::CollapsingHeader("Scanlines", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SliderFloat("Intensity",     &s.scanlineIntensity, 0.0f,  1.0f,   "%.2f");
@@ -1372,7 +1378,7 @@ static SettingsPanel::DrawResult DrawDefault(CRTSettings& s,
     if (ImGui::CollapsingHeader("Glow", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SliderFloat("Strength##g",  &s.glowStrength,     0.0f, 2.0f, "%.2f");
         Tip("Phosphor glow — bright areas bleed softly into their surroundings.");
-        DrawGlowRadius(s);
+        DrawGlowExtras(s);
     }
     if (ImGui::CollapsingHeader("Halation", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SliderFloat("Strength##d",  &s.diffuseStrength,  0.0f, 2.0f, "%.2f");

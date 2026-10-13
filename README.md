@@ -52,6 +52,7 @@ on youtube for the gameplay I got my screenshots from!)
 - Glow and halation from separable Gaussian blur passes on a downsampled, linear-light picture
 - Composite colour bleed — NTSC-style YIQ bandwidth limits (colour smears, detail stays)
 - RGB convergence error (chromatic aberration) that grows toward the screen edges
+- Phosphor persistence (fading trails behind bright moving objects) and raster bloom (the picture swells on bright scenes)
 - Vignette, hum bar, flicker, and TV static
 - Phosphor tint (R/G/B) for monochrome terminal looks
 - Colour grading — brightness, contrast, saturation

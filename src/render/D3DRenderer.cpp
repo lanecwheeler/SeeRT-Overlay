@@ -19,6 +19,10 @@ static constexpr UINT kShaderDataSize =
 static_assert(kShaderDataSize % 16 == 0,
     "CRTSettings shader fields must fill whole 16-byte constant-buffer rows");
 
+// Size of the raster-bloom luminance grid; must match kLumSize / kLumLastMip
+// in crt.hlsl (64 → 1×1 is mip 6).
+static constexpr int kLumSize = 64;
+
 // Swap chain flags used at creation and during ResizeBuffers (they must match).
 static constexpr UINT kSwapChainFlags =
     DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
@@ -328,6 +332,9 @@ bool D3DRenderer::LoadShaders() {
         { L"glow_down_ps.cso", &m_glowDownPS  },
         { L"halo_down_ps.cso", &m_haloDownPS  },
         { L"blur_ps.cso",      &m_blurPS      },
+        { L"persist_ps.cso",   &m_persistPS   },
+        { L"lum_down_ps.cso",  &m_lumDownPS   },
+        { L"lum_smooth_ps.cso",&m_lumSmoothPS },
     };
     for (const auto& p : kPrePasses) {
         ComPtr<ID3DBlob> blob;
@@ -577,29 +584,31 @@ void D3DRenderer::CRTPass(ID3D11RenderTargetView* rtv, int w, int h,
     ID3D11SamplerState* samp = m_sampler.Get();
     m_context->PSSetSamplers(0, 1, &samp);
 
-    ID3D11ShaderResourceView* srvs[4] = { post.picture, ui, post.glow, post.halo };
-    m_context->PSSetShaderResources(0, 4, srvs);
+    ID3D11ShaderResourceView* srvs[5] = { post.picture, ui, post.glow, post.halo, post.avgLum };
+    m_context->PSSetShaderResources(0, 5, srvs);
     m_context->Draw(3, 0);
 
-    ID3D11ShaderResourceView* nullSrvs[4] = {};
-    m_context->PSSetShaderResources(0, 4, nullSrvs);
+    ID3D11ShaderResourceView* nullSrvs[5] = {};
+    m_context->PSSetShaderResources(0, 5, nullSrvs);
     m_context->OMSetRenderTargets(0, nullptr, nullptr);
 }
 
 // ---------------------------------------------------------------------------
 // CreateRenderTarget — texture + RTV + SRV of the given size and format.
 // ---------------------------------------------------------------------------
-bool D3DRenderer::CreateRenderTarget(RenderTarget& rt, int w, int h, DXGI_FORMAT format) {
+bool D3DRenderer::CreateRenderTarget(RenderTarget& rt, int w, int h, DXGI_FORMAT format,
+                                     bool withMips) {
     rt = {};
     D3D11_TEXTURE2D_DESC td = {};
     td.Width      = static_cast<UINT>(std::max(w, 1));
     td.Height     = static_cast<UINT>(std::max(h, 1));
-    td.MipLevels  = 1;
+    td.MipLevels  = withMips ? 0 : 1;   // 0 = full chain, for GenerateMips
     td.ArraySize  = 1;
     td.Format     = format;
     td.SampleDesc = { 1, 0 };
     td.Usage      = D3D11_USAGE_DEFAULT;
     td.BindFlags  = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    td.MiscFlags  = withMips ? D3D11_RESOURCE_MISC_GENERATE_MIPS : 0;
 
     if (FAILED(m_device->CreateTexture2D(&td, nullptr, &rt.tex)) ||
         FAILED(m_device->CreateRenderTargetView(rt.tex.Get(), nullptr, &rt.rtv)) ||
@@ -621,13 +630,18 @@ bool D3DRenderer::EnsurePostChain(PostChain& chain, int w, int h) {
     if (chain.srcW == w && chain.srcH == h && chain.signal.rtv) return true;
     chain = {};
 
-    constexpr DXGI_FORMAT kLinear = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    constexpr DXGI_FORMAT kHalf = DXGI_FORMAT_R16G16B16A16_FLOAT;
     const bool ok =
-        CreateRenderTarget(chain.signal,  w, h, DXGI_FORMAT_R8G8B8A8_UNORM) &&
-        CreateRenderTarget(chain.glow[0], (w + 3) / 4, (h + 3) / 4, kLinear) &&
-        CreateRenderTarget(chain.glow[1], (w + 3) / 4, (h + 3) / 4, kLinear) &&
-        CreateRenderTarget(chain.halo[0], (w + 7) / 8, (h + 7) / 8, kLinear) &&
-        CreateRenderTarget(chain.halo[1], (w + 7) / 8, (h + 7) / 8, kLinear);
+        CreateRenderTarget(chain.signal,     w, h, DXGI_FORMAT_R8G8B8A8_UNORM) &&
+        CreateRenderTarget(chain.history[0], w, h, kHalf) &&
+        CreateRenderTarget(chain.history[1], w, h, kHalf) &&
+        CreateRenderTarget(chain.glow[0], (w + 3) / 4, (h + 3) / 4, kHalf) &&
+        CreateRenderTarget(chain.glow[1], (w + 3) / 4, (h + 3) / 4, kHalf) &&
+        CreateRenderTarget(chain.halo[0], (w + 7) / 8, (h + 7) / 8, kHalf) &&
+        CreateRenderTarget(chain.halo[1], (w + 7) / 8, (h + 7) / 8, kHalf) &&
+        CreateRenderTarget(chain.lumGrid, kLumSize, kLumSize, kHalf, /*withMips=*/true) &&
+        CreateRenderTarget(chain.lum[0], 1, 1, kHalf) &&
+        CreateRenderTarget(chain.lum[1], 1, 1, kHalf);
     if (!ok) {
         OutputDebugStringA("D3DRenderer: post chain creation failed\n");
         chain = {};
@@ -642,7 +656,8 @@ bool D3DRenderer::EnsurePostChain(PostChain& chain, int w, int h) {
 // FullscreenPass — runs ps over all of dst, reading source as t0.
 // ---------------------------------------------------------------------------
 void D3DRenderer::FullscreenPass(ID3D11PixelShader* ps, const RenderTarget& dst,
-                                 ID3D11ShaderResourceView* source) {
+                                 ID3D11ShaderResourceView* source,
+                                 ID3D11ShaderResourceView* history) {
     D3D11_VIEWPORT vp = {};
     vp.Width    = static_cast<float>(dst.w);
     vp.Height   = static_cast<float>(dst.h);
@@ -653,10 +668,12 @@ void D3DRenderer::FullscreenPass(ID3D11PixelShader* ps, const RenderTarget& dst,
     m_context->RSSetViewports(1, &vp);
     m_context->PSSetShader(ps, nullptr, 0);
     m_context->PSSetShaderResources(0, 1, &source);
+    m_context->PSSetShaderResources(5, 1, &history);   // t5; null reads as zero
     m_context->Draw(3, 0);
 
     ID3D11ShaderResourceView* nullSrv = nullptr;
     m_context->PSSetShaderResources(0, 1, &nullSrv);
+    m_context->PSSetShaderResources(5, 1, &nullSrv);
     m_context->OMSetRenderTargets(0, nullptr, nullptr);
 }
 
@@ -695,9 +712,17 @@ D3DRenderer::PostResult D3DRenderer::RunPostChain(PostChain& chain,
     r.picture = source;
 
     const bool composite = s.chromaBleed > 0.001f || s.signalSoftness > 0.001f;
+    const bool persist   = s.persistence > 0.001f;
+    const bool raster    = s.rasterBloom > 0.001f;
     const bool glow      = s.glowStrength > 0.001f;
     const bool halo      = s.diffuseStrength > 0.001f;
-    if (!composite && !glow && !halo) return r;
+
+    // A stage that is off forgets its history, so turning it back on later
+    // doesn't flash a stale frame.
+    if (!persist) chain.historyValid = false;
+    if (!raster)  chain.lumValid     = false;
+
+    if (!composite && !persist && !raster && !glow && !halo) return r;
     if (!EnsurePostChain(chain, w, h)) return r;
 
     m_context->VSSetShader(m_vs.Get(), nullptr, 0);
@@ -706,9 +731,34 @@ D3DRenderer::PostResult D3DRenderer::RunPostChain(PostChain& chain,
     ID3D11SamplerState* samp = m_sampler.Get();
     m_context->PSSetSamplers(0, 1, &samp);
 
+    // Signal stage, then display stages (phosphor persistence; everything
+    // after it — glow, halation, raster bloom — sees the trails too).
     if (composite) {
         FullscreenPass(m_compositePS.Get(), chain.signal, source);
         r.picture = chain.signal.srv.Get();
+    }
+
+    if (persist) {
+        RenderTarget&             dst  = chain.history[chain.historyCur];
+        ID3D11ShaderResourceView* prev = chain.historyValid
+            ? chain.history[chain.historyCur ^ 1].srv.Get() : nullptr;
+        FullscreenPass(m_persistPS.Get(), dst, r.picture, prev);
+        r.picture          = dst.srv.Get();
+        chain.historyCur  ^= 1;
+        chain.historyValid = true;
+    }
+
+    if (raster) {
+        FullscreenPass(m_lumDownPS.Get(), chain.lumGrid, r.picture);
+        m_context->GenerateMips(chain.lumGrid.srv.Get());
+
+        RenderTarget&             dst  = chain.lum[chain.lumCur];
+        ID3D11ShaderResourceView* prev = chain.lumValid
+            ? chain.lum[chain.lumCur ^ 1].srv.Get() : nullptr;
+        FullscreenPass(m_lumSmoothPS.Get(), dst, chain.lumGrid.srv.Get(), prev);
+        r.avgLum       = dst.srv.Get();
+        chain.lumCur  ^= 1;
+        chain.lumValid = true;
     }
 
     if (glow || halo) {

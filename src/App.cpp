@@ -1273,7 +1273,14 @@ void App::Tick() {
         PickCustomCursor();
     }
 
-    m_settings.time = std::chrono::duration<float>(Clock::now() - m_startTime).count();
+    {
+        const float now = std::chrono::duration<float>(Clock::now() - m_startTime).count();
+        // Frame time for the time-based shader effects (phosphor persistence,
+        // raster bloom smoothing).  Clamped so a stall or resuming from pause
+        // doesn't look like one enormous frame.
+        m_settings.frameDelta = std::clamp(now - m_settings.time, 0.f, 0.1f);
+        m_settings.time       = now;
+    }
 
     {
         auto f = m_capture.TryGetFrame();

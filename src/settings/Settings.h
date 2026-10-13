@@ -55,7 +55,12 @@ struct CRTSettings {
     float signalSoftness      = 0.0f;  // 0–1     horizontal softness of the luma signal
     float glowRadius          = 6.0f;  // 1–30    glow spread, in pixels at 1080p
     float halationRadius      = 40.0f; // 10–150  halation spread, in pixels at 1080p
+    float persistence         = 0.0f;  // 0–1     phosphor afterglow (0–250 ms decay)
+
+    float rasterBloom         = 0.0f;  // 0–1     picture grows with scene brightness (up to 5%)
+    float frameDelta          = 0.0f;  // seconds since the previous frame — written each frame by App
     float shaderPad0          = 0.0f;  // keeps the constant buffer a multiple of 16 bytes
+    float shaderPad1          = 0.0f;
 
     // UI-only — not uploaded to the GPU constant buffer.
     // 0 = CRT OSD  1 = Simple  2 = N64  3 = Camcorder  4 = DOS Terminal  5 = VCR

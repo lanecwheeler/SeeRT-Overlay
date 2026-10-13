@@ -166,6 +166,9 @@ set(SHADER_ENTRIES
     "crt_ps|ps_5_0|PS_Main"               # CRT effect
     "crt_blit_ps|ps_5_0|PS_Blit"          # pass-through copy
     "composite_ps|ps_5_0|PS_Composite"    # composite signal bandwidth limits
+    "persist_ps|ps_5_0|PS_Persist"        # phosphor persistence (frame history)
+    "lum_down_ps|ps_5_0|PS_LumDown"       # scene luminance grid (raster bloom)
+    "lum_smooth_ps|ps_5_0|PS_LumSmooth"   # temporal smoothing of average luminance
     "glow_down_ps|ps_5_0|PS_GlowDown"     # linearise + 1/4 downsample
     "halo_down_ps|ps_5_0|PS_HaloDown"     # threshold + 1/8 downsample
     "blur_ps|ps_5_0|PS_Blur"              # separable Gaussian blur
