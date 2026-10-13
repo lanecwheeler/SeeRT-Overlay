@@ -39,6 +39,7 @@ static const char* kSectionNames[] = {
 };
 static constexpr int kSectionCount = 14;
 static constexpr int kMenuSection  = 13;   // style switcher + panel size
+static constexpr int kPresetsSection = 1;
 
 // Show a tooltip for the most recently drawn item.
 static void Tip(const char* text) {
@@ -1530,6 +1531,309 @@ static SettingsPanel::DrawResult DrawDefault(CRTSettings& s,
 }
 
 // ---------------------------------------------------------------------------
+// Drawing helpers shared by the game-style menus.
+// ---------------------------------------------------------------------------
+// Scales a colour's RGB by k (clamped), keeping alpha.
+static ImU32 Shade(ImU32 c, float k) {
+    auto ch = [&](int shift) {
+        const int v = static_cast<int>(((c >> shift) & 0xFF) * k);
+        return static_cast<ImU32>(std::clamp(v, 0, 255)) << shift;
+    };
+    return ch(IM_COL32_R_SHIFT) | ch(IM_COL32_G_SHIFT) | ch(IM_COL32_B_SHIFT) | (c & IM_COL32_A_MASK);
+}
+
+// Replaces a colour's alpha.
+static ImU32 WithAlpha(ImU32 c, float a) {
+    return (c & ~IM_COL32_A_MASK) |
+           (static_cast<ImU32>(std::clamp(a, 0.f, 1.f) * 255.f + 0.5f) << IM_COL32_A_SHIFT);
+}
+
+// Blends two colours (alpha included); t in 0–1.
+static ImU32 Mix(ImU32 a, ImU32 b, float t) {
+    t = std::clamp(t, 0.f, 1.f);
+    auto ch = [&](int shift) {
+        const float x = static_cast<float>((a >> shift) & 0xFF);
+        const float y = static_cast<float>((b >> shift) & 0xFF);
+        return static_cast<ImU32>(x + (y - x) * t + 0.5f) << shift;
+    };
+    return ch(IM_COL32_R_SHIFT) | ch(IM_COL32_G_SHIFT) | ch(IM_COL32_B_SHIFT) | ch(IM_COL32_A_SHIFT);
+}
+
+// Top-to-bottom gradient colour at height y, with an optional middle stop.
+static ImU32 VGrad(float y, float y0, float y1, ImU32 top, ImU32 bottom) {
+    return Mix(top, bottom, (y - y0) / std::max(1.f, y1 - y0));
+}
+static ImU32 VGrad3(float y, float y0, float y1, ImU32 top, ImU32 mid, ImU32 bottom) {
+    const float k = (y - y0) / std::max(1.f, y1 - y0);
+    return k < 0.5f ? Mix(top, mid, k * 2.f) : Mix(mid, bottom, k * 2.f - 1.f);
+}
+
+// Recolours the vertices added to dl since vtxStart with fn(pos).  Each
+// vertex keeps its own alpha, so anti-aliased edges stay soft.
+template <typename Fn>
+static void ShadeVerts(ImDrawList* dl, int vtxStart, Fn fn) {
+    for (int i = vtxStart; i < dl->VtxBuffer.Size; ++i) {
+        ImDrawVert& v = dl->VtxBuffer[i];
+        const ImU32 c = fn(v.pos);
+        const float a = ((v.col >> IM_COL32_A_SHIFT) & 0xFF) / 255.f *
+                        ((c     >> IM_COL32_A_SHIFT) & 0xFF) / 255.f;
+        v.col = WithAlpha(c, a);
+    }
+}
+
+// Deterministic hash in [0, 1).
+static float Hash(float x, float y) {
+    const float h = sinf(x * 127.1f + y * 311.7f) * 43758.5453f;
+    return h - floorf(h);
+}
+
+// "CAPTURE SOURCE" → "Capture Source".  Cherry Bomb's capital R closes up at
+// button sizes and reads as an A ("STAEAMING"), so button labels use title
+// case; the big page titles stay in capitals.
+static std::string TitleCase(const char* s) {
+    std::string out(s);
+    bool wordStart = true;
+    for (char& ch : out) {
+        if (ch == ' ') { wordStart = true; continue; }
+        ch = static_cast<char>(wordStart ? toupper(static_cast<unsigned char>(ch))
+                                         : tolower(static_cast<unsigned char>(ch)));
+        wordStart = false;
+    }
+    return out;
+}
+
+// 0 → 1 with a small overshoot past 1 before settling — the "bouncy" ease.
+static float EaseOutBack(float t) {
+    t = std::clamp(t, 0.f, 1.f);
+    constexpr float c1 = 1.70158f, c3 = c1 + 1.f;
+    return 1.f + c3 * powf(t - 1.f, 3.f) + c1 * powf(t - 1.f, 2.f);
+}
+
+// Heavy landing: falls, then bounces to rest.
+static float EaseOutBounce(float x) {
+    x = std::clamp(x, 0.f, 1.f);
+    constexpr float n = 7.5625f, d = 2.75f;
+    if (x < 1.f / d)   return n * x * x;
+    if (x < 2.f / d)   { x -= 1.5f   / d; return n * x * x + 0.75f; }
+    if (x < 2.5f / d)  { x -= 2.25f  / d; return n * x * x + 0.9375f; }
+    x -= 2.625f / d;   return n * x * x + 0.984375f;
+}
+
+
+// ---------------------------------------------------------------------------
+// Paged menu — the layout shared by the game-style menus: a main page with
+// every settings group as a button in a grid, a page per group, a footer with
+// BACK on the left and QUIT on the right, and a close button in the top-right
+// corner.  Esc steps back to the main page.  A style supplies its look and
+// layout by overriding the hooks; DrawPagedMenu does the navigation.
+// All lengths are at 1x — DrawPagedMenu applies the menu scale.
+// ---------------------------------------------------------------------------
+class PagedMenuStyle {
+public:
+    virtual ~PagedMenuStyle() = default;
+
+    // Layout.
+    virtual ImVec2 PanelSize()   const = 0;
+    virtual ImVec2 Padding()     const = 0;   // window padding
+    virtual float  TitleSpace()  const = 0;   // space above the page content
+    virtual float  FooterSpace() const = 0;   // space below it
+    virtual float  FooterRow()   const = 0;   // footer buttons' top, up from the panel bottom
+    virtual float  FooterInset() const { return 0.f; }   // footer buttons' extra side margin
+    virtual int    Columns()     const { return 2; }
+    virtual float  Gutter()      const { return 0.f; }   // room left of the first column (hover pointer)
+    virtual float  ColumnGap()   const { return 12.f; }
+    virtual float  GroupButtonHeight() const = 0;        // main page
+    virtual float  ItemButtonHeight()  const = 0;        // preset and style grids
+    virtual float  SliderWidth() const { return 0.55f; } // fraction of the content width
+
+    // Text.
+    virtual ImFont*     Font()     const = 0;
+    virtual float       FontSize() const = 0;
+    virtual std::string PageTitle(int pageIndex) const {
+        return pageIndex < 0 ? "SETTINGS" : kSectionNames[pageIndex];
+    }
+    virtual std::string GroupLabel(int section) const { return TitleCase(kSectionNames[section]); }
+
+    // Animation — t is seconds since the panel opened / the page changed.
+    virtual ImVec2 OpenOffset(float)  const { return ImVec2(0.f, 0.f); }
+    virtual float  OpenReveal(float)  const { return 1.f; }   // visible fraction, growing from the middle
+    virtual ImVec2 PageOffset(float)  const { return ImVec2(0.f, 0.f); }
+    virtual float  PageReveal(float)  const { return 1.f; }   // visible fraction of the content, top down
+
+    // Drawing.  a..b is the panel in screen space.
+    virtual void   DrawPanel(ImDrawList* dl, ImVec2 a, ImVec2 b, int page, float t) = 0;
+    virtual void   DrawTitle(ImDrawList* dl, ImVec2 a, ImVec2 b, const char* title, int page, float t) = 0;
+    // A grid button — settings groups (large), presets and styles.  True when clicked.
+    virtual bool   GroupButton(const char* id, const char* label, ImVec2 size, int index,
+                               bool selected, bool large) = 0;
+    virtual bool   BackButton(const char* id) = 0;     // drawn at the cursor
+    virtual float  QuitWidth() const = 0;
+    virtual bool   QuitButton(const char* id) = 0;     // drawn at the cursor
+    virtual void   DrawFooter(ImDrawList*, ImVec2 /*a*/, ImVec2 /*b*/, int /*page*/, float /*t*/) {}  // a..b = footer band
+    virtual ImVec2 CloseCenter(ImVec2 a, ImVec2 b) const = 0;
+    virtual bool   CloseButton(const char* id, ImVec2 center) = 0;
+
+    // Navigation state.
+    int   page      = -1;   // -1 = main page, else a section index
+    float pageTime  = 0.f;
+    float openTime  = 0.f;
+    int   lastFrame = -10;
+};
+
+static SettingsPanel::DrawResult DrawPagedMenu(PagedMenuStyle& st, const char* windowId,
+                                               CRTSettings& s,
+                                               const Monitors& monitors,
+                                               HMONITOR selectedMon,
+                                               const std::vector<HMONITOR>& secondaryMons,
+                                               bool streamOpen,
+                                               const std::vector<PresetItem>& presets,
+                                               const AudioDevs& audioDevices) {
+    SettingsPanel::DrawResult result;
+    const float t = static_cast<float>(ImGui::GetTime());
+
+    // Freshly opened (not drawn last frame): start on the main page.
+    if (ImGui::GetFrameCount() - st.lastFrame > 1) {
+        st.openTime = t;
+        st.page     = -1;
+        st.pageTime = t;
+    }
+    st.lastFrame = ImGui::GetFrameCount();
+    auto goTo = [&](int page) { st.page = page; st.pageTime = t; };
+
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float  panelW  = PanelWidth(st.PanelSize().x);
+    const float  panelH  = PanelHeight(st.PanelSize().y);
+    const ImVec2 open    = st.OpenOffset(t - st.openTime);
+    ImGui::SetNextWindowPos(ImVec2((display.x - panelW) * 0.5f + open.x, (display.y - panelH) * 0.5f + open.y),
+                            ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_Always);
+
+    constexpr ImGuiWindowFlags kFlags =
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
+        ImGuiWindowFlags_NoScrollWithMouse;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(Sc(st.Padding().x), Sc(st.Padding().y)));
+    const bool visible = ImGui::Begin(windowId, nullptr, kFlags);
+    ImGui::PopStyleVar();
+    if (!visible) { ImGui::End(); return result; }
+
+    ImGui::PushFont(st.Font(), st.FontSize());
+    ImDrawList*  dl = ImGui::GetWindowDrawList();
+    const ImVec2 pa = ImGui::GetWindowPos();
+    const ImVec2 pb(pa.x + panelW, pa.y + panelH);
+
+    // Opening reveal: only a band through the middle shows, growing to full height.
+    const float reveal = st.OpenReveal(t - st.openTime);
+    if (reveal < 1.f) {
+        const float cy = (pa.y + pb.y) * 0.5f;
+        const float hh = std::max(Sc(1.f), panelH * 0.5f * reveal);
+        ImGui::PushClipRect(ImVec2(pa.x, cy - hh), ImVec2(pb.x, cy + hh), false);
+    }
+
+    st.DrawPanel(dl, pa, pb, st.page, t);
+    st.DrawTitle(dl, pa, pb, st.PageTitle(st.page).c_str(), st.page, t);
+    ImGui::Dummy(ImVec2(0.f, Sc(st.TitleSpace())));
+
+    // Page content.
+    const ImVec2 po = st.PageOffset(t - st.pageTime);
+    ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX() + po.x, ImGui::GetCursorPosY() + po.y));
+    ImGui::BeginChild("##page", ImVec2(0.f, -Sc(st.FooterSpace())), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoBackground);
+    {
+        const float pageReveal = st.PageReveal(t - st.pageTime);
+        if (pageReveal < 1.f) {
+            const ImVec2 cp = ImGui::GetWindowPos(), cs = ImGui::GetWindowSize();
+            ImGui::PushClipRect(cp, ImVec2(cp.x + cs.x, cp.y + cs.y * pageReveal), true);
+        }
+
+        const float avail  = ImGui::GetContentRegionAvail().x;
+        const int   cols   = st.Columns();
+        const float gutter = Sc(st.Gutter()), gap = Sc(st.ColumnGap());
+        const float bw     = (avail - gutter - gap * (cols - 1) - Sc(12.f)) / cols;
+        auto gridCell = [&](int i) {
+            if (i % cols == 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + gutter);
+            else               ImGui::SameLine(0.f, gap);
+        };
+        const ImVec2 itemSize(bw, Sc(st.ItemButtonHeight()));
+
+        if (st.page < 0) {
+            for (int i = 0; i < kSectionCount; ++i) {
+                gridCell(i);
+                ImGui::PushID(i);
+                if (st.GroupButton("##group", st.GroupLabel(i).c_str(), ImVec2(bw, Sc(st.GroupButtonHeight())),
+                                   i, false, true))
+                    goTo(i);
+                ImGui::PopID();
+            }
+        } else if (st.page == kPresetsSection) {
+            // Presets as a grid of buttons, with the usual dropdown / save / manage row underneath.
+            for (int i = 0; i < static_cast<int>(presets.size()); ++i) {
+                gridCell(i);
+                ImGui::PushID(i);
+                if (st.GroupButton("##preset", presets[i].name.c_str(), itemSize, i, false, false)) {
+                    result.applyPreset    = true;
+                    result.presetSettings = presets[i].settings;
+                }
+                ImGui::PopID();
+            }
+            ImGui::Dummy(ImVec2(0.f, Sc(6.f)));
+            DrawSectionContent(st.page, s, monitors, selectedMon, secondaryMons,
+                               streamOpen, presets, audioDevices, result);
+        } else if (st.page == kMenuSection) {
+            // Styles as a grid of buttons, then the panel-size sliders.
+            for (int i = 0; i < kStyleCount; ++i) {
+                gridCell(i);
+                ImGui::PushID(i);
+                if (st.GroupButton("##style", kStyleNames[i], itemSize, i, s.menuStyle == i, false))
+                    s.menuStyle = i;
+                ImGui::PopID();
+            }
+            ImGui::Dummy(ImVec2(0.f, Sc(14.f)));
+            ImGui::PushItemWidth(avail * st.SliderWidth());
+            DrawMenuSizeControls(s);
+            ImGui::PopItemWidth();
+        } else {
+            ImGui::PushItemWidth(avail * st.SliderWidth());
+            DrawSectionContent(st.page, s, monitors, selectedMon, secondaryMons,
+                               streamOpen, presets, audioDevices, result);
+            ImGui::PopItemWidth();
+        }
+        ImGui::Dummy(ImVec2(0.f, Sc(8.f)));   // room for the last button's shadow
+
+        if (pageReveal < 1.f) ImGui::PopClipRect();
+    }
+    ImGui::EndChild();
+
+    if (st.page >= 0 && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsAnyItemActive())
+        goTo(-1);
+
+    // Footer — BACK on the left (not on the main page), QUIT on the right.
+    const float footerY = panelH - Sc(st.FooterRow());
+    const float padX    = ImGui::GetCursorStartPos().x;   // this window's padding
+    const float inset   = Sc(st.FooterInset());
+    st.DrawFooter(dl, ImVec2(pa.x, pa.y + footerY), pb, st.page, t);
+    if (st.page >= 0) {
+        ImGui::SetCursorPos(ImVec2(padX + inset, footerY));
+        if (st.BackButton("##back")) goTo(-1);
+        Tip("Back to the main menu (Esc).");
+    }
+    ImGui::SetCursorPos(ImVec2(panelW - padX - inset - st.QuitWidth(), footerY));
+    if (st.QuitButton("##quit")) PostQuitMessage(0);
+    Tip("Quit the overlay application entirely.");
+
+    // Close button.  It may sit in the window padding, so widen the clip rect to reach it.
+    ImGui::PushClipRect(pa, pb, false);
+    if (st.CloseButton("##close", st.CloseCenter(pa, pb))) s.menuVisible = false;
+    Tip("Close the settings panel (Ctrl+Shift+C to re-open).");
+    ImGui::PopClipRect();
+
+    if (reveal < 1.f) ImGui::PopClipRect();
+    ImGui::PopFont();
+    ImGui::End();
+    return result;
+}
+
+// ---------------------------------------------------------------------------
 // 64 Adventure layout — a bubbly late-90s console-game menu.
 //   • Rainbow title in the classic four-colour console palette, each letter
 //     bobbing on a wave, with a chunky cartoon outline.
@@ -1548,17 +1852,6 @@ constexpr ImU32 kBlue   = IM_COL32( 44,  96, 224, 255);
 constexpr ImU32 kInk    = IM_COL32( 22,  14,  44, 255);  // outlines
 constexpr ImU32 kWhite  = IM_COL32(255, 255, 255, 255);
 constexpr ImU32 kPalette[4] = { kRed, kYellow, kGreen, kBlue };
-
-constexpr int kMainPage = -1;
-
-// Scales a colour's RGB by k (clamped), keeping alpha.
-ImU32 Shade(ImU32 c, float k) {
-    auto ch = [&](int shift) {
-        const int v = static_cast<int>(((c >> shift) & 0xFF) * k);
-        return static_cast<ImU32>(std::clamp(v, 0, 255)) << shift;
-    };
-    return ch(IM_COL32_R_SHIFT) | ch(IM_COL32_G_SHIFT) | ch(IM_COL32_B_SHIFT) | (c & IM_COL32_A_MASK);
-}
 
 ImFont* Font() { return StyleFonts::cherryBomb ? StyleFonts::cherryBomb : ImGui::GetFont(); }
 
@@ -1591,28 +1884,6 @@ void Star(ImDrawList* dl, ImVec2 c, float r, float rot, ImU32 fill) {
     for (int i = 0; i < 10; ++i)
         dl->AddTriangleFilled(c, pts[i], pts[(i + 1) % 10], fill);
     dl->AddPolyline(pts, 10, kInk, ImDrawFlags_Closed, Sc(2.f));
-}
-
-// "CAPTURE SOURCE" → "Capture Source".  Cherry Bomb's capital R closes up at
-// button sizes and reads as an A ("STAEAMING"), so button labels use title
-// case; the big page titles stay in capitals.
-std::string TitleCase(const char* s) {
-    std::string out(s);
-    bool wordStart = true;
-    for (char& ch : out) {
-        if (ch == ' ') { wordStart = true; continue; }
-        ch = static_cast<char>(wordStart ? toupper(static_cast<unsigned char>(ch))
-                                         : tolower(static_cast<unsigned char>(ch)));
-        wordStart = false;
-    }
-    return out;
-}
-
-// 0 → 1 with a small overshoot past 1 before settling — the "bouncy" ease.
-float EaseOutBack(float t) {
-    t = std::clamp(t, 0.f, 1.f);
-    constexpr float c1 = 1.70158f, c3 = c1 + 1.f;
-    return 1.f + c3 * powf(t - 1.f, 3.f) + c1 * powf(t - 1.f, 2.f);
 }
 
 // Glossy pill button.  Returns true when clicked.
@@ -1761,169 +2032,57 @@ void Panel(ImDrawList* dl, ImVec2 a, ImVec2 b, float t) {
                       IM_COL32(255, 255, 255, 18), Sc(20.f));
 }
 
-} // namespace adv64
+// The 64 Adventure look for the shared paged menu.
+class Style : public PagedMenuStyle {
+public:
+    ImVec2  PanelSize()   const override { return ImVec2(680.f, 690.f); }
+    ImVec2  Padding()     const override { return ImVec2(36.f, 26.f); }
+    float   TitleSpace()  const override { return 70.f; }
+    float   FooterSpace() const override { return 60.f; }
+    float   FooterRow()   const override { return 64.f; }
+    float   FooterInset() const override { return 8.f; }
+    float   Gutter()      const override { return 48.f; }   // room for the hover star
+    float   ColumnGap()   const override { return 50.f; }
+    float   GroupButtonHeight() const override { return 54.f; }
+    float   ItemButtonHeight()  const override { return 44.f; }
+    ImFont* Font()        const override { return adv64::Font(); }
+    float   FontSize()    const override { return 20.f; }
 
-static SettingsPanel::DrawResult DrawAdventure64(CRTSettings& s,
-                                                 const Monitors& monitors,
-                                                 HMONITOR selectedMon,
-                                                 const std::vector<HMONITOR>& secondaryMons,
-                                                 bool streamOpen,
-                                                 const std::vector<PresetItem>& presets,
-                                                 const AudioDevs& audioDevices) {
-    using namespace adv64;
-    static int   s_page      = kMainPage;
-    static float s_pageTime  = 0.f;
-    static int   s_lastFrame = -10;
-    static float s_openTime  = 0.f;
+    // The panel drops in and each page slides up, both with a bouncy overshoot.
+    ImVec2 OpenOffset(float t) const override { return ImVec2(0.f, (1.f - EaseOutBack(t / 0.45f)) * Sc(-80.f)); }
+    ImVec2 PageOffset(float t) const override { return ImVec2(0.f, (1.f - EaseOutBack(t / 0.35f)) * Sc(40.f)); }
 
-    SettingsPanel::DrawResult result;
-    const float t = static_cast<float>(ImGui::GetTime());
+    void DrawPanel(ImDrawList* dl, ImVec2 a, ImVec2 b, int, float t) override { Panel(dl, a, b, t); }
 
-    // Freshly opened (not drawn last frame): pop in on the main page.
-    if (ImGui::GetFrameCount() - s_lastFrame > 1) {
-        s_openTime = t;
-        s_page     = kMainPage;
-        s_pageTime = t;
-    }
-    s_lastFrame = ImGui::GetFrameCount();
-    auto goTo = [&](int page) { s_page = page; s_pageTime = t; };
-
-    const ImVec2 display = ImGui::GetIO().DisplaySize;
-    const float  panelW  = PanelWidth(680.f);
-    const float  panelH  = PanelHeight(690.f);
-    const float  drop    = (1.f - EaseOutBack((t - s_openTime) / 0.45f)) * Sc(-80.f);
-    ImGui::SetNextWindowPos(ImVec2((display.x - panelW) * 0.5f, (display.y - panelH) * 0.5f + drop),
-                            ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_Always);
-
-    constexpr ImGuiWindowFlags kFlags =
-        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
-        ImGuiWindowFlags_NoScrollWithMouse;
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(Sc(36.f), Sc(26.f)));
-    const bool visible = ImGui::Begin("##adv64", nullptr, kFlags);
-    ImGui::PopStyleVar();
-    if (!visible) { ImGui::End(); return result; }
-
-    ImGui::PushFont(Font(), 20.f);
-    ImDrawList*  dl = ImGui::GetWindowDrawList();
-    const ImVec2 wp = ImGui::GetWindowPos();
-    Panel(dl, wp, ImVec2(wp.x + panelW, wp.y + panelH), t);
-
-    // Title — every letter its own colour, bobbing on a wave.
-    {
-        const char* title = (s_page == kMainPage) ? "SETTINGS" : kSectionNames[s_page];
+    // Every letter its own colour, bobbing on a wave.
+    void DrawTitle(ImDrawList* dl, ImVec2 a, ImVec2 b, const char* title, int, float t) override {
         const float size = Sc(50.f), gap = Sc(2.f);
         float width = 0.f;
         for (int i = 0; title[i]; ++i) {
             const char ch[2] = { title[i], 0 };
             width += TextSize(size, ch).x + gap;
         }
-        float x = wp.x + (panelW - width) * 0.5f;
+        float x = a.x + (b.x - a.x - width) * 0.5f;
         for (int i = 0; title[i]; ++i) {
             const char ch[2] = { title[i], 0 };
             if (ch[0] != ' ')
-                CartoonText(dl, size, ImVec2(x, wp.y + Sc(24.f + sinf(t * 3.2f + i * 0.55f) * 4.f)),
+                CartoonText(dl, size, ImVec2(x, a.y + Sc(24.f + sinf(t * 3.2f + i * 0.55f) * 4.f)),
                             kPalette[i % 4], ch);
             x += TextSize(size, ch).x + gap;
         }
-        ImGui::Dummy(ImVec2(0.f, Sc(70.f)));
     }
 
-    // Page content, sliding up with a bounce whenever the page changes.
-    const float kFooterH = Sc(60.f);
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (1.f - EaseOutBack((t - s_pageTime) / 0.35f)) * Sc(40.f));
-    ImGui::BeginChild("##adv64page", ImVec2(0.f, -kFooterH), ImGuiChildFlags_None,
-                      ImGuiWindowFlags_NoBackground);
-    {
-        const float avail = ImGui::GetContentRegionAvail().x;
-        if (s_page == kMainPage) {
-            // Two columns of group buttons, with room on the left of each for the hover star.
-            const float kStarRoom = Sc(48.f), kGap = Sc(50.f);   // room for the hover star
-            const float bw = (avail - kStarRoom - kGap - Sc(12.f)) * 0.5f;
-            for (int i = 0; i < kSectionCount; ++i) {
-                const std::string label = TitleCase(kSectionNames[i]);
-                if (i % 2 == 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kStarRoom);
-                else            ImGui::SameLine(0.f, kGap);
-                ImGui::PushID(i);
-                if (BubbleButton("##group", label.c_str(), ImVec2(bw, Sc(54.f)), kPalette[(i / 2 + i) % 4], Sc(22.f)))
-                    goTo(i);
-                ImGui::PopID();
-            }
-        } else if (strcmp(kSectionNames[s_page], "PRESETS") == 0) {
-            // Presets as a grid of bubble buttons — like picking a course —
-            // with the usual dropdown / save / manage row underneath.
-            const float kStarRoom = Sc(48.f), kGap = Sc(50.f);   // room for the hover star
-            const float bw = (avail - kStarRoom - kGap - Sc(12.f)) * 0.5f;
-            for (int i = 0; i < static_cast<int>(presets.size()); ++i) {
-                if (i % 2 == 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kStarRoom);
-                else            ImGui::SameLine(0.f, kGap);
-                ImGui::PushID(i);
-                if (BubbleButton("##preset", presets[i].name.c_str(), ImVec2(bw, Sc(44.f)),
-                                 kPalette[(i / 2 + i) % 4], Sc(19.f))) {
-                    result.applyPreset    = true;
-                    result.presetSettings = presets[i].settings;
-                }
-                ImGui::PopID();
-            }
-            ImGui::Dummy(ImVec2(0.f, Sc(6.f)));
-            DrawSectionContent(s_page, s, monitors, selectedMon, secondaryMons,
-                               streamOpen, presets, audioDevices, result);
-        } else if (s_page == kMenuSection) {
-            // Styles as a grid of bubble buttons, then the panel-size sliders.
-            const float kStarRoom = Sc(48.f), kGap = Sc(50.f);   // room for the hover star
-            const float bw = (avail - kStarRoom - kGap - Sc(12.f)) * 0.5f;
-            for (int i = 0; i < kStyleCount; ++i) {
-                if (i % 2 == 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kStarRoom);
-                else            ImGui::SameLine(0.f, kGap);
-                ImGui::PushID(i);
-                if (BubbleButton("##style", kStyleNames[i], ImVec2(bw, Sc(44.f)),
-                                 kPalette[(i / 2 + i) % 4], Sc(19.f), s.menuStyle == i))
-                    s.menuStyle = i;
-                ImGui::PopID();
-            }
-            ImGui::Dummy(ImVec2(0.f, Sc(14.f)));
-            ImGui::PushItemWidth(avail * 0.55f);
-            DrawMenuSizeControls(s);
-            ImGui::PopItemWidth();
-        } else {
-            ImGui::PushItemWidth(avail * 0.55f);
-            DrawSectionContent(s_page, s, monitors, selectedMon, secondaryMons,
-                               streamOpen, presets, audioDevices, result);
-            ImGui::PopItemWidth();
-        }
-        ImGui::Dummy(ImVec2(0.f, Sc(8.f)));   // room for the last button's shadow
+    bool GroupButton(const char* id, const char* label, ImVec2 size, int index, bool selected, bool large) override {
+        return BubbleButton(id, label, size, kPalette[(index / 2 + index) % 4], Sc(large ? 22.f : 19.f), selected);
     }
-    ImGui::EndChild();
+    bool   BackButton(const char* id) override { return Prompt(id, "B", kGreen, "BACK", Sc(20.f)); }
+    float  QuitWidth() const override { return PromptWidth("C", "QUIT", Sc(20.f)); }
+    bool   QuitButton(const char* id) override { return Prompt(id, "C", kYellow, "QUIT", Sc(20.f)); }
+    ImVec2 CloseCenter(ImVec2 a, ImVec2 b) const override { return ImVec2(b.x - Sc(48.f), a.y + Sc(48.f)); }
+    bool   CloseButton(const char* id, ImVec2 c) override { return adv64::CloseButton(id, c, Sc(22.f)); }
+};
 
-    // Esc steps back out of a page, like a B press.
-    if (s_page != kMainPage && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsAnyItemActive())
-        goTo(kMainPage);
-
-    // Footer — controller-style prompts: (B) BACK on the left, (C) QUIT on the right.
-    const float footerY = panelH - kFooterH - Sc(4.f);
-    const float padX    = ImGui::GetCursorStartPos().x;   // this window's padding
-    if (s_page != kMainPage) {
-        ImGui::SetCursorPos(ImVec2(padX + Sc(8.f), footerY));
-        if (Prompt("##back", "B", kGreen, "BACK", Sc(20.f))) goTo(kMainPage);
-        Tip("Back to the main menu (Esc).");
-    }
-    ImGui::SetCursorPos(ImVec2(panelW - padX - Sc(8.f) - PromptWidth("C", "QUIT", Sc(20.f)), footerY));
-    if (Prompt("##quit", "C", kYellow, "QUIT", Sc(20.f))) PostQuitMessage(0);
-    Tip("Quit the overlay application entirely.");
-
-    // Close — a round X button in the top-right corner, inside the gold rim.
-    // It sits in the window padding, so widen the clip rect to reach it.
-    ImGui::PushClipRect(wp, ImVec2(wp.x + panelW, wp.y + panelH), false);
-    if (CloseButton("##close", ImVec2(wp.x + panelW - Sc(48.f), wp.y + Sc(48.f)), Sc(22.f)))
-        s.menuVisible = false;
-    Tip("Close the settings panel (Ctrl+Shift+C to re-open).");
-    ImGui::PopClipRect();
-
-    ImGui::PopFont();
-    ImGui::End();
-    return result;
-}
+} // namespace adv64
 
 // ---------------------------------------------------------------------------
 // Sword & Sorcery layout — an 80s barbarian-fantasy dungeon menu.
@@ -1955,69 +2114,13 @@ constexpr ImU32 kEyeGlow  = IM_COL32(120, 255,  90, 255);  // skull eyes
 constexpr ImU32 kFire[4]  = { IM_COL32(200,  40,  10, 255), IM_COL32(255, 120,  20, 255),
                               IM_COL32(255, 200,  60, 255), IM_COL32(255, 245, 200, 255) };
 
-constexpr int kMainPage = -1;
-
 ImFont* TitleFont() { return StyleFonts::metalMania ? StyleFonts::metalMania : ImGui::GetFont(); }
 ImFont* BodyFont()  { return StyleFonts::cinzel     ? StyleFonts::cinzel     : ImGui::GetFont(); }
-
-ImU32 WithAlpha(ImU32 c, float a) {
-    return (c & ~IM_COL32_A_MASK) |
-           (static_cast<ImU32>(std::clamp(a, 0.f, 1.f) * 255.f + 0.5f) << IM_COL32_A_SHIFT);
-}
-
-// Blends two colours (alpha included); t in 0–1.
-ImU32 Mix(ImU32 a, ImU32 b, float t) {
-    t = std::clamp(t, 0.f, 1.f);
-    auto ch = [&](int shift) {
-        const float x = static_cast<float>((a >> shift) & 0xFF);
-        const float y = static_cast<float>((b >> shift) & 0xFF);
-        return static_cast<ImU32>(x + (y - x) * t + 0.5f) << shift;
-    };
-    return ch(IM_COL32_R_SHIFT) | ch(IM_COL32_G_SHIFT) | ch(IM_COL32_B_SHIFT) | ch(IM_COL32_A_SHIFT);
-}
-
-// Top-to-bottom gradient colour at height y, with an optional middle stop.
-ImU32 VGrad(float y, float y0, float y1, ImU32 top, ImU32 bottom) {
-    return Mix(top, bottom, (y - y0) / std::max(1.f, y1 - y0));
-}
-ImU32 VGrad3(float y, float y0, float y1, ImU32 top, ImU32 mid, ImU32 bottom) {
-    const float k = (y - y0) / std::max(1.f, y1 - y0);
-    return k < 0.5f ? Mix(top, mid, k * 2.f) : Mix(mid, bottom, k * 2.f - 1.f);
-}
-
-// Recolours the vertices added to dl since vtxStart with fn(pos).  Each
-// vertex keeps its own alpha, so anti-aliased edges stay soft.
-template <typename Fn>
-void ShadeVerts(ImDrawList* dl, int vtxStart, Fn fn) {
-    for (int i = vtxStart; i < dl->VtxBuffer.Size; ++i) {
-        ImDrawVert& v = dl->VtxBuffer[i];
-        const ImU32 c = fn(v.pos);
-        const float a = ((v.col >> IM_COL32_A_SHIFT) & 0xFF) / 255.f *
-                        ((c     >> IM_COL32_A_SHIFT) & 0xFF) / 255.f;
-        v.col = WithAlpha(c, a);
-    }
-}
-
-// Deterministic hash in [0, 1).
-float Hash(float x, float y) {
-    const float h = sinf(x * 127.1f + y * 311.7f) * 43758.5453f;
-    return h - floorf(h);
-}
 
 // Torch-light flicker in roughly [0, 1]: a few unrelated sines.
 float Flicker(float t, float seed) {
     return 0.5f + 0.25f * sinf(t * 7.3f + seed) + 0.15f * sinf(t * 13.1f + seed * 2.1f)
                 + 0.10f * sinf(t * 23.7f + seed * 3.7f);
-}
-
-// Heavy landing: falls, then bounces to rest.
-float EaseOutBounce(float x) {
-    x = std::clamp(x, 0.f, 1.f);
-    constexpr float n = 7.5625f, d = 2.75f;
-    if (x < 1.f / d)   return n * x * x;
-    if (x < 2.f / d)   { x -= 1.5f   / d; return n * x * x + 0.75f; }
-    if (x < 2.5f / d)  { x -= 2.25f  / d; return n * x * x + 0.9375f; }
-    x -= 2.625f / d;   return n * x * x + 0.984375f;
 }
 
 // A rectangle with its corners cut off, clockwise from the top-left corner's
@@ -2256,11 +2359,11 @@ bool Tablet(const char* id, const char* label, ImVec2 size, float fontSize,
 
     // Face, lit from above.
     Chamfer(a, b, c, pts);
-    const ImU32 base = held ? adv64::Shade(tint, 0.8f) : hovered ? adv64::Shade(tint, 1.18f) : tint;
+    const ImU32 base = held ? Shade(tint, 0.8f) : hovered ? Shade(tint, 1.18f) : tint;
     const int   v0   = dl->VtxBuffer.Size;
     dl->AddConvexPolyFilled(pts, 8, IM_COL32_WHITE);
     ShadeVerts(dl, v0, [&](ImVec2 p) {
-        return VGrad(p.y, a.y, b.y, adv64::Shade(base, 1.3f), adv64::Shade(base, 0.68f));
+        return VGrad(p.y, a.y, b.y, Shade(base, 1.3f), Shade(base, 0.68f));
     });
 
     // Chiselled bevel: light along the top and left, dark along the bottom and right.
@@ -2367,160 +2470,65 @@ bool CloseSeal(const char* id, ImVec2 c, float r) {
     return clicked;
 }
 
-} // namespace sorcery
+// The Sword & Sorcery look for the shared paged menu.
+class Style : public PagedMenuStyle {
+public:
+    ImVec2  PanelSize()   const override { return ImVec2(700.f, 700.f); }
+    ImVec2  Padding()     const override { return ImVec2(42.f, 28.f); }
+    float   TitleSpace()  const override { return 82.f; }
+    float   FooterSpace() const override { return 64.f; }
+    float   FooterRow()   const override { return 66.f; }
+    float   Gutter()      const override { return 70.f; }   // room for the hover sword
+    float   ColumnGap()   const override { return 74.f; }
+    float   GroupButtonHeight() const override { return 50.f; }
+    float   ItemButtonHeight()  const override { return 42.f; }
+    ImFont* Font()        const override { return BodyFont(); }
+    float   FontSize()    const override { return 17.f; }
 
-static SettingsPanel::DrawResult DrawSorcery(CRTSettings& s,
-                                             const Monitors& monitors,
-                                             HMONITOR selectedMon,
-                                             const std::vector<HMONITOR>& secondaryMons,
-                                             bool streamOpen,
-                                             const std::vector<PresetItem>& presets,
-                                             const AudioDevs& audioDevices) {
-    using namespace sorcery;
-    static int   s_page      = kMainPage;
-    static float s_pageTime  = 0.f;
-    static int   s_lastFrame = -10;
-    static float s_openTime  = 0.f;
-
-    SettingsPanel::DrawResult result;
-    const float t = static_cast<float>(ImGui::GetTime());
-
-    // Freshly opened (not drawn last frame): slam down onto the main page.
-    if (ImGui::GetFrameCount() - s_lastFrame > 1) {
-        s_openTime = t;
-        s_page     = kMainPage;
-        s_pageTime = t;
+    // The panel slams down like a dungeon gate; pages rumble in.
+    ImVec2 OpenOffset(float t) const override { return ImVec2(0.f, (1.f - EaseOutBounce(t / 0.6f)) * Sc(-140.f)); }
+    ImVec2 PageOffset(float t) const override {
+        return ImVec2(t < 0.35f ? sinf(t * 70.f) * Sc(5.f) * (1.f - t / 0.35f) : 0.f, 0.f);
     }
-    s_lastFrame = ImGui::GetFrameCount();
-    auto goTo = [&](int page) { s_page = page; s_pageTime = t; };
 
-    const ImVec2 display = ImGui::GetIO().DisplaySize;
-    const float  panelW  = PanelWidth(700.f);
-    const float  panelH  = PanelHeight(700.f);
-    const float  drop    = (1.f - EaseOutBounce((t - s_openTime) / 0.6f)) * Sc(-140.f);
-    ImGui::SetNextWindowPos(ImVec2((display.x - panelW) * 0.5f, (display.y - panelH) * 0.5f + drop),
-                            ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_Always);
+    void DrawPanel(ImDrawList* dl, ImVec2 a, ImVec2 b, int, float t) override {
+        const float th = Sc(18.f);   // frame thickness
+        Frame(dl, a, b, th);
+        Wall(dl, ImVec2(a.x + th, a.y + th), ImVec2(b.x - th, b.y - th));
+        Torch(dl, ImVec2(a.x + Sc(80.f), a.y + Sc(72.f)), t, 0.f);
+        Torch(dl, ImVec2(b.x - Sc(80.f), a.y + Sc(72.f)), t, 2.7f);
+    }
 
-    constexpr ImGuiWindowFlags kFlags =
-        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
-        ImGuiWindowFlags_NoScrollWithMouse;
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(Sc(42.f), Sc(28.f)));
-    const bool visible = ImGui::Begin("##sorcery", nullptr, kFlags);
-    ImGui::PopStyleVar();
-    if (!visible) { ImGui::End(); return result; }
-
-    ImGui::PushFont(BodyFont(), 17.f);
-    ImDrawList*  dl = ImGui::GetWindowDrawList();
-    const ImVec2 wp = ImGui::GetWindowPos();
-    const ImVec2 pa = wp, pb(wp.x + panelW, wp.y + panelH);
-    const float  th = Sc(18.f);   // frame thickness
-
-    Frame(dl, pa, pb, th);
-    Wall(dl, ImVec2(pa.x + th, pa.y + th), ImVec2(pb.x - th, pb.y - th));
-    Torch(dl, ImVec2(pa.x + Sc(80.f), pa.y + Sc(72.f)), t, 0.f);
-    Torch(dl, ImVec2(pb.x - Sc(80.f), pa.y + Sc(72.f)), t, 2.7f);
-
-    // Title, shrunk if needed to fit between the torches.
-    {
-        const char* title = (s_page == kMainPage) ? "SETTINGS" : kSectionNames[s_page];
-        const float full  = Sc(56.f);
-        const float maxW  = panelW - Sc(220.f);
+    // Shrunk if needed to fit between the torches.
+    void DrawTitle(ImDrawList* dl, ImVec2 a, ImVec2 b, const char* title, int, float t) override {
+        const float full = Sc(56.f);
+        const float maxW = (b.x - a.x) - Sc(220.f);
         float size = full;
         float w    = TitleFont()->CalcTextSizeA(size, FLT_MAX, 0.f, title).x;
         if (w > maxW) { size *= maxW / w; w = maxW; }
-        MoltenTitle(dl, size, ImVec2(wp.x + (panelW - w) * 0.5f, wp.y + Sc(28.f) + (full - size) * 0.5f), title, t);
-        ImGui::Dummy(ImVec2(0.f, Sc(82.f)));
+        MoltenTitle(dl, size, ImVec2(a.x + (b.x - a.x - w) * 0.5f, a.y + Sc(28.f) + (full - size) * 0.5f), title, t);
     }
 
-    // Page content — rumbles sideways for a moment whenever the page changes.
-    const float kFooterH = Sc(64.f);
-    const float since    = t - s_pageTime;
-    if (since < 0.35f)
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + sinf(since * 70.f) * Sc(5.f) * (1.f - since / 0.35f));
-    ImGui::BeginChild("##sorcerypage", ImVec2(0.f, -kFooterH), ImGuiChildFlags_None,
-                      ImGuiWindowFlags_NoBackground);
-    {
-        const float avail      = ImGui::GetContentRegionAvail().x;
-        const float kSwordRoom = Sc(70.f), kGap = Sc(74.f);   // room for the hover sword
-        const float bw         = (avail - kSwordRoom - kGap - Sc(12.f)) * 0.5f;
-        auto gridCell = [&](int i) {
-            if (i % 2 == 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kSwordRoom);
-            else            ImGui::SameLine(0.f, kGap);
-        };
-        if (s_page == kMainPage) {
-            for (int i = 0; i < kSectionCount; ++i) {
-                gridCell(i);
-                ImGui::PushID(i);
-                if (Tablet("##group", adv64::TitleCase(kSectionNames[i]).c_str(), ImVec2(bw, Sc(50.f)), Sc(19.f)))
-                    goTo(i);
-                ImGui::PopID();
-            }
-        } else if (strcmp(kSectionNames[s_page], "PRESETS") == 0) {
-            for (int i = 0; i < static_cast<int>(presets.size()); ++i) {
-                gridCell(i);
-                ImGui::PushID(i);
-                if (Tablet("##preset", presets[i].name.c_str(), ImVec2(bw, Sc(42.f)), Sc(17.f))) {
-                    result.applyPreset    = true;
-                    result.presetSettings = presets[i].settings;
-                }
-                ImGui::PopID();
-            }
-            ImGui::Dummy(ImVec2(0.f, Sc(6.f)));
-            DrawSectionContent(s_page, s, monitors, selectedMon, secondaryMons,
-                               streamOpen, presets, audioDevices, result);
-        } else if (s_page == kMenuSection) {
-            for (int i = 0; i < kStyleCount; ++i) {
-                gridCell(i);
-                ImGui::PushID(i);
-                if (Tablet("##style", kStyleNames[i], ImVec2(bw, Sc(42.f)), Sc(17.f), s.menuStyle == i))
-                    s.menuStyle = i;
-                ImGui::PopID();
-            }
-            ImGui::Dummy(ImVec2(0.f, Sc(14.f)));
-            ImGui::PushItemWidth(avail * 0.55f);
-            DrawMenuSizeControls(s);
-            ImGui::PopItemWidth();
-        } else {
-            ImGui::PushItemWidth(avail * 0.55f);
-            DrawSectionContent(s_page, s, monitors, selectedMon, secondaryMons,
-                               streamOpen, presets, audioDevices, result);
-            ImGui::PopItemWidth();
-        }
-        ImGui::Dummy(ImVec2(0.f, Sc(8.f)));   // room for the last tablet's shadow
+    bool GroupButton(const char* id, const char* label, ImVec2 size, int, bool selected, bool large) override {
+        return Tablet(id, label, size, Sc(large ? 19.f : 17.f), selected);
     }
-    ImGui::EndChild();
-
-    // Esc steps back out of a page.
-    if (s_page != kMainPage && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsAnyItemActive())
-        goTo(kMainPage);
-
-    // Footer — BACK on the left, QUIT on the right, a skull keeping watch between.
-    const float  footerY = panelH - kFooterH - Sc(2.f);
-    const float  padX    = ImGui::GetCursorStartPos().x;   // this window's padding
-    const ImVec2 fbs(Sc(132.f), Sc(40.f));
-    if (s_page != kMainPage) {
-        ImGui::SetCursorPos(ImVec2(padX, footerY));
-        if (Tablet("##back", "Back", fbs, Sc(18.f), false, kStone, false)) goTo(kMainPage);
-        Tip("Back to the main menu (Esc).");
+    bool  BackButton(const char* id) override { return Tablet(id, "Back", FooterButton(), Sc(18.f), false, kStone, false); }
+    float QuitWidth() const override { return FooterButton().x; }
+    bool  QuitButton(const char* id) override {
+        return Tablet(id, "Quit", FooterButton(), Sc(18.f), false, IM_COL32(112, 40, 42, 255), false);
     }
-    ImGui::SetCursorPos(ImVec2(panelW - padX - fbs.x, footerY));
-    if (Tablet("##quit", "Quit", fbs, Sc(18.f), false, IM_COL32(112, 40, 42, 255), false)) PostQuitMessage(0);
-    Tip("Quit the overlay application entirely.");
-    Skull(dl, ImVec2(wp.x + panelW * 0.5f, wp.y + footerY + fbs.y * 0.45f), Sc(44.f), t);
+    // A skull keeps watch between BACK and QUIT.
+    void DrawFooter(ImDrawList* dl, ImVec2 a, ImVec2 b, int, float t) override {
+        Skull(dl, ImVec2((a.x + b.x) * 0.5f, a.y + Sc(18.f)), Sc(44.f), t);
+    }
+    ImVec2 CloseCenter(ImVec2 a, ImVec2 b) const override { return ImVec2(b.x - Sc(36.f), a.y + Sc(36.f)); }
+    bool   CloseButton(const char* id, ImVec2 c) override { return CloseSeal(id, c, Sc(22.f)); }
 
-    // Close — an iron seal on the top-right corner of the frame.
-    ImGui::PushClipRect(pa, pb, false);
-    if (CloseSeal("##close", ImVec2(pb.x - Sc(36.f), pa.y + Sc(36.f)), Sc(22.f)))
-        s.menuVisible = false;
-    Tip("Close the settings panel (Ctrl+Shift+C to re-open).");
-    ImGui::PopClipRect();
+private:
+    static ImVec2 FooterButton() { return ImVec2(Sc(132.f), Sc(40.f)); }
+};
 
-    ImGui::PopFont();
-    ImGui::End();
-    return result;
-}
+} // namespace sorcery
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -2563,8 +2571,16 @@ SettingsPanel::DrawResult SettingsPanel::Draw(CRTSettings& s,
         case 3:  result = DrawCamcorder (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
         case 4:  result = DrawDOS       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
         case 5:  result = DrawVCR       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
-        case 6:  result = DrawAdventure64(s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
-        case 7:  result = DrawSorcery   (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
+        case 6: {
+            static adv64::Style adv64Style;
+            result = DrawPagedMenu(adv64Style, "##adv64", s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices);
+            break;
+        }
+        case 7: {
+            static sorcery::Style sorceryStyle;
+            result = DrawPagedMenu(sorceryStyle, "##sorcery", s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices);
+            break;
+        }
         default: result = DrawOSD       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
     }
     style = saved;
