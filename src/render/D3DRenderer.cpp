@@ -15,6 +15,8 @@
 // Everything from menuStyle onward is CPU-only and must not be included.
 static constexpr UINT kShaderDataSize =
     static_cast<UINT>(offsetof(CRTSettings, menuStyle));
+static_assert(kShaderDataSize % 16 == 0,
+    "CRTSettings shader fields must fill whole 16-byte constant-buffer rows");
 
 // Swap chain flags used at creation and during ResizeBuffers (they must match).
 static constexpr UINT kSwapChainFlags =
@@ -346,6 +348,18 @@ bool D3DRenderer::CreateIntermediateRT() {
     hr = m_device->CreateShaderResourceView(m_intermediateTex.Get(), nullptr, &m_intermediateSRV);
     if (FAILED(hr)) { OutputDebugStringA("D3DRenderer: CreateSRV (intermediate) failed\n"); return false; }
 
+    // UI layer — same size and format; holds premultiplied-alpha UI.
+    m_uiTex.Reset();
+    m_uiRTV.Reset();
+    m_uiSRV.Reset();
+    if (FAILED(m_device->CreateTexture2D(&td, nullptr, &m_uiTex)) ||
+        FAILED(m_device->CreateRenderTargetView(m_uiTex.Get(), nullptr, &m_uiRTV)) ||
+        FAILED(m_device->CreateShaderResourceView(m_uiTex.Get(), nullptr, &m_uiSRV))) {
+        OutputDebugStringA("D3DRenderer: UI layer creation failed\n");
+        m_uiRTV.Reset();
+        return false;
+    }
+
     return true;
 }
 
@@ -410,10 +424,10 @@ ID3D11ShaderResourceView* D3DRenderer::GetOrBuildCaptureSRV(ID3D11Texture2D* tex
 
 // ---------------------------------------------------------------------------
 // RenderFrame — pipeline:
-//   Pass 1  : blit capturedTex → intermediate RT     (format conversion)
-//   Stream  : CRT of streamTex → stream swap chain   (if active)
-//   Pass 2  : CRT of intermediate → back buffer
-//   ImGui   : settings panel on top of CRT           (if imguiDrawData != null)
+//   Pass 1  : blit capturedTex → intermediate RT        (format conversion)
+//   Stream  : CRT of streamTex → stream swap chain      (if active)
+//   UI      : ImGui + sprites → transparent UI RT
+//   Pass 2  : CRT of intermediate, UI composited → back buffer
 //   Present
 // ---------------------------------------------------------------------------
 void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& settings,
@@ -422,7 +436,7 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
     // Retry a resize that failed earlier (WM_SIZE won't fire again on its own).
     if (m_pendingWidth > 0 && m_pendingHeight > 0)
         Resize(m_pendingWidth, m_pendingHeight);
-    if (!m_rtv || !m_intermediateRTV) return;
+    if (!m_rtv || !m_intermediateRTV || !m_uiRTV) return;
 
     const float black[4] = { 0.f, 0.f, 0.f, 1.f };
 
@@ -498,7 +512,9 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
             ID3D11SamplerState* samp = m_sampler.Get();
             m_context->PSSetSamplers(0, 1, &samp);
 
-            m_context->PSSetShaderResources(0, 1, &streamSRV);
+            // t1 (UI layer) left unbound — reads as zero, so no UI on the stream.
+            ID3D11ShaderResourceView* srvs[2] = { streamSRV, nullptr };
+            m_context->PSSetShaderResources(0, 2, srvs);
 
             m_context->Draw(3, 0);
 
@@ -507,27 +523,31 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
             m_context->OMSetRenderTargets(0, nullptr, nullptr);
 
             m_streamSwapChain->Present(0, 0); // no vsync — driven by main Present
-
-            // Restore intermediate RTV and main viewport for ImGui.
-            {
-                ID3D11RenderTargetView* rtv = m_intermediateRTV.Get();
-                m_context->OMSetRenderTargets(1, &rtv, nullptr);
-            }
-            m_context->RSSetViewports(1, &mainVP);
         }
     }
 
-    // Settings panel — rendered into the intermediate RT so the CRT pass
-    // applies the filter (curvature, scanlines, etc.) to the UI as well.
+    // -----------------------------------------------------------------------
+    // UI LAYER — settings panel, cursor and other sprites, drawn into their
+    // own transparent RT.  The CRT pass composites it over the picture, so it
+    // still gets curvature, scanlines and the mask, but per-line resolve
+    // never smears the menu text.
+    // -----------------------------------------------------------------------
+    {
+        const float clear[4] = { 0.f, 0.f, 0.f, 0.f };
+        m_context->ClearRenderTargetView(m_uiRTV.Get(), clear);
+        ID3D11RenderTargetView* rtv = m_uiRTV.Get();
+        m_context->OMSetRenderTargets(1, &rtv, nullptr);
+        m_context->RSSetViewports(1, &mainVP);
+    }
+
     if (imguiDrawData)
         ImGui_ImplDX11_RenderDrawData(imguiDrawData);
 
-    // Sprites (cursor, click-point marker) — drawn into the intermediate RT so
-    // they are CRT-filtered.  Used by secondary overlays that have no ImGui context.
+    // Used by secondary overlays, which have no ImGui context.
     for (int i = 0; i < spriteCount; ++i)
         DrawSprite(sprites[i]);
 
-    // Unbind the intermediate RTV so it can be read as SRV in pass 2.
+    // Unbind so the intermediate and UI RTs can be read as SRVs in pass 2.
     m_context->OMSetRenderTargets(0, nullptr, nullptr);
 
     // -----------------------------------------------------------------------
@@ -549,14 +569,14 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
     ID3D11SamplerState* samp = m_sampler.Get();
     m_context->PSSetSamplers(0, 1, &samp);
 
-    ID3D11ShaderResourceView* intermediateSRV = m_intermediateSRV.Get();
-    m_context->PSSetShaderResources(0, 1, &intermediateSRV);
+    ID3D11ShaderResourceView* srvs[2] = { m_intermediateSRV.Get(), m_uiSRV.Get() };
+    m_context->PSSetShaderResources(0, 2, srvs);
 
     m_context->Draw(3, 0);
 
     {
-        ID3D11ShaderResourceView* nullSrv = nullptr;
-        m_context->PSSetShaderResources(0, 1, &nullSrv);
+        ID3D11ShaderResourceView* nullSrvs[2] = { nullptr, nullptr };
+        m_context->PSSetShaderResources(0, 2, nullSrvs);
     }
 
     m_swapChain->Present(1, 0); // vsync on main

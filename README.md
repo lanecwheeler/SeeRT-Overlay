@@ -44,11 +44,13 @@ on youtube for the gameplay I got my screenshots from!)
 ## Features
 
 **Shader pipeline** (RetroArch-inspired, gamma-correct)
-- Barrel/pincushion distortion with zoom compensation
-- Gaussian beam scanlines with luminance-dependent spread
-- Shadow mask — aperture grille, shadow mask dots, and slot mask patterns (anti-aliased)
+- Barrel/pincushion distortion with zoom compensation and rounded, anti-aliased tube corners
+- Gaussian beam scanlines that follow the screen curvature, widen with brightness, and keep overall brightness
+- Optional per-line colour resolve, so each scanline carries one colour like a real low-resolution signal
+- Pixel-aligned phosphor masks — aperture grille, shadow mask, staggered slot mask, and 2-pixel magenta/green — with brightness compensation
+- Separate CRT (2.4) and display (2.2) gamma
 - Phosphor bloom and diffusion
-- RGB convergence error (chromatic aberration)
+- RGB convergence error (chromatic aberration) that grows toward the screen edges
 - Vignette, hum bar, flicker, and TV static
 - Phosphor tint (R/G/B) for monochrome terminal looks
 - Colour grading — brightness, contrast, saturation

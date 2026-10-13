@@ -1,25 +1,32 @@
 // CRT Monitor Overlay — combined vertex + pixel shader
 // Compiled as VS_5_0 (entry: VS_Main) and PS_5_0 (entry: PS_Main).
 //
-// Improvements ported from RetroArch shader library (crt-geom, crt-lottes,
-// crt-royale techniques) adapted to HLSL 5.0:
-//   • Gamma-correct pipeline: linearize on input, re-encode on output.
-//   • Gaussian beam scanlines: physically-based profile that widens for
-//     brighter pixels (crt-geom luminance-dependent sigma).
-//   • RGB convergence: per-channel horizontal UV offset (crt-lottes).
-//   • Anti-aliased shadow mask: fwidth-based smoothstep dissolve at cell edges.
+// Techniques adapted from the RetroArch / libretro shader library:
+//   • Beam scanlines in curved picture space: each output pixel blends the two
+//     nearest lines, each a Gaussian beam that widens with brightness
+//     (crt-geom, crt-guest-advanced), normalised to unit area so scanlines
+//     redistribute light rather than remove it.
+//   • Optional per-line colour resolve, so each line carries one colour from
+//     its band of the picture like a low-resolution signal (crt-easymode /
+//     crt-geom sample per source line).
+//   • Separate CRT and display gamma (crt-geom: 2.4 in, 2.2 out).
+//   • Pixel-aligned phosphor masks with lit-phosphor brightness compensation
+//     (crt-lottes maskDark/maskLight), including a staggered slot mask
+//     (crt-guest-advanced) and the 2-pixel magenta/green mask.
+//   • Rounded, anti-aliased tube corners (crt-geom cornersize).
+//   • Convergence error that grows toward the screen edges (guest dctype).
 
 // ---------------------------------------------------------------------------
 // Constant buffer — must match the CRTSettings C++ struct exactly.
-// 27 user floats + convergence (formerly _pad4) = 28 floats = 112 bytes (7 × 16).
+// 36 floats = 144 bytes (9 × 16).
 // ---------------------------------------------------------------------------
 cbuffer CRTParams : register(b0) {
     float curvatureX;       // 0–0.5
     float curvatureY;       // 0–0.5
     float zoom;             // 1.0–2.0
-    float scanlineIntensity;// 0–1
+    float scanlineIntensity;// 0–1  flat picture → full beam profile
 
-    float scanlineCount;    // 200–1200
+    float scanlineCount;    // 200–1200 lines across the picture height
     float vignetteStrength; // 0–1
     float glowStrength;     // 0–2
     float brightness;       // 0.5–2.0
@@ -44,17 +51,34 @@ cbuffer CRTParams : register(b0) {
     float staticSpeed;        // 1–60 fps
     float shadowMaskIntensity;// 0–1
 
-    float shadowMaskScale;    // 0.5–4 px/cell
-    float shadowMaskType;     // 0=aperture grille, 1=shadow mask, 2=slot mask
+    float shadowMaskScale;    // 1–4 px per phosphor stripe (rounded)
+    float shadowMaskType;     // 0=aperture grille, 1=shadow mask, 2=slot mask, 3=magenta/green
     float humBarFrequency;    // 0.5–20 visible bands
     float convergence;        // 0–1  RGB horizontal misalignment
+
+    float crtGamma;           // 1.8–3.0 CRT decoding gamma
+    float displayGamma;       // 1.8–3.0 output encoding gamma
+    float beamWidth;          // 0.1–0.5 beam sigma of dark lines, in line heights
+    float beamDynamics;       // 0–1  how much brighter lines widen
+
+    float lineResolve;        // 0–1  per-line colour resolve
+    float maskCompensation;   // 0–1  lit-phosphor brightness compensation
+    float cornerRadius;       // 0–0.25 rounded corners, fraction of picture height
+    float shaderPad0;
 };
 
 // ---------------------------------------------------------------------------
-// Texture + sampler
+// Textures + sampler
+//   t0 — the captured picture (gamma-encoded)
+//   t1 — settings UI + cursor, premultiplied alpha (gamma-encoded).  Kept
+//        separate so per-line resolve never smears the menu text.  Unbound
+//        (reads as zero) for the stream output.
 // ---------------------------------------------------------------------------
 Texture2D    gCaptureTexture : register(t0);
+Texture2D    gUITexture      : register(t1);
 SamplerState gLinearClamp    : register(s0);
+
+static const float3 kLuma = float3(0.2126, 0.7152, 0.0722);
 
 // ---------------------------------------------------------------------------
 // Vertex shader — SV_VertexID full-screen triangle, no vertex buffer needed.
@@ -75,11 +99,17 @@ VS_Output VS_Main(uint id : SV_VertexID) {
 }
 
 // ---------------------------------------------------------------------------
-// Gamma helpers — pow(2.2) approximation, accurate enough for CRT simulation.
-// All CRT light math runs in linear space; these bracket the pipeline.
+// Helpers
 // ---------------------------------------------------------------------------
-float3 ToLinear(float3 c) { return pow(max(c, 0.0001), 2.2); }
-float3 ToGamma (float3 c) { return pow(max(c, 0.0001), 1.0 / 2.2); }
+float2 TexSize() {
+    float w, h;
+    gCaptureTexture.GetDimensions(w, h);
+    return float2(w, h);
+}
+
+// Signal → light with the tube's gamma; light → signal with the monitor's.
+float3 ToLinear(float3 c) { return pow(max(c, 0.0001), crtGamma); }
+float3 ToGamma (float3 c) { return pow(max(c, 0.0001), 1.0 / displayGamma); }
 
 // ---------------------------------------------------------------------------
 // Barrel / pincushion distortion.
@@ -94,44 +124,113 @@ float2 BarrelDistort(float2 uv) {
 }
 
 // ---------------------------------------------------------------------------
-// Sample source with optional horizontal RGB convergence offset (crt-lottes).
-// Returned values are still gamma-encoded; caller linearizes afterwards.
+// Signed distance to the rounded edge of the picture, in picture heights
+// (negative inside).  Rounded-box SDF in aspect-corrected space so corners
+// are circular on any monitor shape.
 // ---------------------------------------------------------------------------
-float3 SampleSource(float2 uv) {
-    if (convergence < 0.001)
-        return gCaptureTexture.Sample(gLinearClamp, uv).rgb;
-
-    // Red shifts right, blue shifts left — classic lateral chromatic aberration.
-    float2 off = float2(convergence * 0.003, 0.0);
-    float r = gCaptureTexture.Sample(gLinearClamp, uv + off).r;
-    float g = gCaptureTexture.Sample(gLinearClamp, uv      ).g;
-    float b = gCaptureTexture.Sample(gLinearClamp, uv - off).b;
-    return float3(r, g, b);
+float CornerDistance(float2 uv) {
+    float2 sz     = TexSize();
+    float  aspect = sz.x / sz.y;
+    float  r      = clamp(cornerRadius, 0.0, 0.5);
+    float2 p      = abs(uv - 0.5) * float2(aspect, 1.0);
+    float2 q      = p - (float2(0.5 * aspect, 0.5) - r);
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
 
 // ---------------------------------------------------------------------------
-// Gaussian beam scanlines (crt-geom / crt-lottes technique).
-//
-// Replaces the old sine-wave approximation with a proper Gaussian that:
-//   • operates in linear light space for physically correct darkening
-//   • widens for brighter pixels (higher beam current → wider excitation area)
-//   • blends smoothly to no-effect at scanlineIntensity = 0
+// Sample the picture (gamma-encoded) with optional RGB convergence error.
+// Misconvergence on a real tube is worst at the edges, so the offset grows
+// from 40% at the centre to 100% at the sides.
 // ---------------------------------------------------------------------------
-float3 GaussianScanline(float3 col, float screenY) {
-    if (scanlineIntensity < 0.001) return col;
+float3 SampleSource(float2 uv) {
+    float3 c;
+    if (convergence < 0.001) {
+        c = gCaptureTexture.Sample(gLinearClamp, uv).rgb;
+    } else {
+        float  edge = 0.4 + 0.6 * abs(uv.x * 2.0 - 1.0);
+        float2 off  = float2(convergence * 0.003 * edge, 0.0);
+        c.r = gCaptureTexture.Sample(gLinearClamp, uv + off).r; // red shifts right
+        c.g = gCaptureTexture.Sample(gLinearClamp, uv      ).g;
+        c.b = gCaptureTexture.Sample(gLinearClamp, uv - off).b; // blue shifts left
+    }
+    return c;
+}
 
-    float lineHeight = 1080.0 / scanlineCount;
-    // t: −0.5 = gap centre, 0 = beam centre, +0.5 = gap centre
-    float t = frac(screenY / lineHeight) - 0.5;
+// Average of the picture across one line's band — the single colour a
+// low-resolution signal would carry on that line.  Three bilinear taps.
+float3 SampleBand(float2 uv, float bandH) {
+    float dy = bandH / 3.0;
+    return (SampleSource(uv - float2(0.0, dy)) +
+            SampleSource(uv) +
+            SampleSource(uv + float2(0.0, dy))) / 3.0;
+}
 
-    // Base beam sigma; bright phosphors spread wider (crt-geom luminance trick).
-    float sigma = 0.25;
-    float lum   = dot(col, float3(0.2126, 0.7152, 0.0722));
-    float adjustedSigma = sigma * (1.0 + 0.40 * lum);
+// ---------------------------------------------------------------------------
+// Colour grade.
+// Contrast is a power curve pivoting on linear mid-grey (0.18), so blacks stay
+// black.  Brightness, saturation and phosphor tint are linear, so GradeLight
+// can equally be applied to summed light (bloom / diffusion).
+// ---------------------------------------------------------------------------
+float3 Contrast(float3 c) { return 0.18 * pow(max(c, 0.0) / 0.18, contrast); }
 
-    float gaussian = exp(-t * t / (2.0 * adjustedSigma * adjustedSigma));
-    // lerp lets scanlineIntensity 0→1 fade from flat to full Gaussian profile.
-    return col * lerp(1.0, gaussian, scanlineIntensity);
+float3 GradeLight(float3 c) {
+    c *= brightness;
+    float lum = dot(c, kLuma);
+    c = lerp(float3(lum, lum, lum), c, saturation);
+    return c * float3(phosphorR, phosphorG, phosphorB);
+}
+
+float3 Grade(float3 c) { return GradeLight(Contrast(c)); }
+
+// Picture signal for one line: optionally resolved toward the line's band
+// colour, with the UI layer composited on top (premultiplied alpha, in signal
+// space — as if the menu were part of the picture), then decoded and graded.
+float3 LineColor(float3 nativeG, float2 lineUV, float bandH, float4 ui) {
+    float3 g = nativeG;
+    if (lineResolve > 0.001)
+        g = lerp(nativeG, SampleBand(lineUV, bandH), lineResolve);
+    g = g * (1.0 - ui.a) + ui.rgb;
+    return Grade(ToLinear(g));
+}
+
+// ---------------------------------------------------------------------------
+// Beam scanlines, in picture (curved) space.
+//
+// y runs in line units with integers at line centres.  The pixel lies between
+// line n and n+1 (f = 0 at n, 1 at n+1); each line contributes a Gaussian
+// beam whose sigma widens with that line's brightness (higher beam current).
+// Each beam is normalised to unit area, so the average light of a flat field
+// is preserved — dark gaps are paid for by brighter beam centres.
+//
+// lineDensity (lines per output pixel) fades the scanlines out as they
+// approach the pixel grid, where they can only alias into moiré.
+// ---------------------------------------------------------------------------
+float3 Beam(float2 uv, float3 nativeG, float4 ui, float lineDensity) {
+    float strength = scanlineIntensity * saturate((0.6 - lineDensity) / 0.25);
+
+    if (strength < 0.001 && lineResolve < 0.001)
+        return Grade(ToLinear(nativeG * (1.0 - ui.a) + ui.rgb));
+
+    float lines = max(scanlineCount, 1.0);
+    float bandH = 1.0 / lines;
+    float y     = uv.y * lines - 0.5;
+    float n     = floor(y);
+    float f     = y - n;
+
+    float3 c0 = LineColor(nativeG, float2(uv.x, (n + 0.5) * bandH), bandH, ui);
+    float3 c1 = LineColor(nativeG, float2(uv.x, (n + 1.5) * bandH), bandH, ui);
+
+    // No scanlines: neighbouring lines blend smoothly into each other.
+    float3 flat = lerp(c0, c1, smoothstep(0.0, 1.0, f));
+    if (strength < 0.001) return flat;
+
+    const float kInvSqrt2Pi = 0.39894228;
+    float3 s0 = min(beamWidth * (1.0 + beamDynamics * saturate(c0)), 0.5);
+    float3 s1 = min(beamWidth * (1.0 + beamDynamics * saturate(c1)), 0.5);
+    float3 w0 = exp(-0.5 * f * f / (s0 * s0)) * kInvSqrt2Pi / s0;
+    float3 w1 = exp(-0.5 * (1.0 - f) * (1.0 - f) / (s1 * s1)) * kInvSqrt2Pi / s1;
+
+    return lerp(flat, c0 * w0 + c1 * w1, strength);
 }
 
 // ---------------------------------------------------------------------------
@@ -144,24 +243,25 @@ float Vignette(float2 uv) {
 
 // ---------------------------------------------------------------------------
 // Bloom — 8-tap ring phosphor halation, accumulated in linear space.
-// Linearising each tap means bright pixels contribute quadratically more glow,
-// matching how phosphor halation actually works.
+// Radius is the same number of pixels horizontally and vertically.
+// Returns ungraded linear light.
 // ---------------------------------------------------------------------------
 float3 Bloom(float2 uv) {
     if (glowStrength < 0.001) return float3(0, 0, 0);
 
-    float r   = 0.004 * glowStrength;
+    float2 sz  = TexSize();
+    float2 r   = float2(sz.y / sz.x, 1.0) * (0.004 * glowStrength);
+    float2 d   = r * 0.707;
     float3 acc = float3(0, 0, 0);
 
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2( r,  0)).rgb);
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2(-r,  0)).rgb);
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2( 0,  r)).rgb);
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2( 0, -r)).rgb);
-    float d = r * 0.707;
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2( d,  d)).rgb);
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2(-d,  d)).rgb);
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2( d, -d)).rgb);
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2(-d, -d)).rgb);
+    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2( r.x, 0)).rgb);
+    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2(-r.x, 0)).rgb);
+    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2(0,  r.y)).rgb);
+    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2(0, -r.y)).rgb);
+    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2( d.x,  d.y)).rgb);
+    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2(-d.x,  d.y)).rgb);
+    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2( d.x, -d.y)).rgb);
+    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2(-d.x, -d.y)).rgb);
 
     return (acc / 8.0) * glowStrength * 0.25;
 }
@@ -186,29 +286,32 @@ float Flicker() {
 
 // ---------------------------------------------------------------------------
 // Diffusion bloom — luminance-gated glow, taps linearized for correct blending.
-// diffuseThreshold lives in gamma space (as shown on sliders), so it is
-// linearized here before comparing against linear-space tap luminance.
+// diffuseThreshold lives in signal (gamma) space, as shown on the slider, so
+// it is decoded with the CRT gamma before comparing against tap luminance.
+// Returns ungraded linear light.
 // ---------------------------------------------------------------------------
 float3 Diffusion(float2 uv) {
     if (diffuseStrength < 0.001) return float3(0, 0, 0);
 
-    float3 acc = float3(0, 0, 0);
-    float  r1  = 0.004 * (1.0 + diffuseStrength);
-    float  r2  = 0.011 * (1.0 + diffuseStrength);
-    float  linThresh = pow(max(diffuseThreshold, 0.0001), 2.2);
+    float2 sz        = TexSize();
+    float2 aspectFix = float2(sz.y / sz.x, 1.0);
+    float3 acc       = float3(0, 0, 0);
+    float  r1        = 0.004 * (1.0 + diffuseStrength);
+    float  r2        = 0.011 * (1.0 + diffuseStrength);
+    float  linThresh = pow(max(diffuseThreshold, 0.0001), crtGamma);
 
     [unroll]
     for (int i = 0; i < 8; i++) {
         float  a   = i * 0.78539816;
-        float2 dir = float2(cos(a), sin(a));
+        float2 dir = float2(cos(a), sin(a)) * aspectFix;
 
         float3 s1   = ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + dir * r1).rgb);
-        float  lum1 = dot(s1, float3(0.2126, 0.7152, 0.0722));
+        float  lum1 = dot(s1, kLuma);
         float  g1   = max(0.0, lum1 - linThresh);
         acc += s1 * (g1 * g1) * 0.55;
 
         float3 s2   = ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + dir * r2).rgb);
-        float  lum2 = dot(s2, float3(0.2126, 0.7152, 0.0722));
+        float  lum2 = dot(s2, kLuma);
         float  g2   = max(0.0, lum2 - linThresh);
         acc += s2 * (g2 * g2) * 0.25;
     }
@@ -230,73 +333,58 @@ float HumBar(float uvY) {
 }
 
 // ---------------------------------------------------------------------------
-// Shadow mask — three patterns, all with fwidth-based anti-aliasing.
+// Phosphor mask — per-channel gain at screen pixel px.
 //
-// The AA works by replacing hard if/fmod branches with smoothstep transitions
-// whose width is set by fwidth(p.x) — the rate of change of the pattern
-// coordinate across one screen pixel. When the mask is fine (scale < ~2 px),
-// the transitions overlap and the colours average toward neutral gray, exactly
-// matching how a real display would look at that scale. (crt-aperture technique)
+// Patterns are aligned to whole screen pixels (crt-lottes, guest), so each
+// phosphor stripe lands exactly on pixels instead of smearing into grey.
+// Unlit phosphors drop to (1 - intensity).  Lit ones are boosted by up to
+// the amount that keeps the pattern's average at 1 (maskCompensation), the
+// way crt-lottes' maskLight > 1 offsets maskDark < 1.
 // ---------------------------------------------------------------------------
-float3 ShadowMask(float2 screenPos) {
+float3 ShadowMask(float2 px) {
     if (shadowMaskIntensity < 0.001) return float3(1, 1, 1);
 
-    float2 p  = screenPos / max(shadowMaskScale, 0.1);
-    int type  = (int)round(shadowMaskType);
-    float3 mask;
-    float fw  = fwidth(p.x) * 0.5; // AA half-width in pattern-space units
+    float  s       = shadowMaskIntensity;
+    float  size    = max(1.0, round(shadowMaskScale));
+    int    type    = (int)round(shadowMaskType);
+    float3 lit;            // 1 where this channel's phosphor covers the pixel
+    float  litFrac;        // share of the pattern each channel is lit in
+    float  rowGain = 1.0;  // slot-mask breaks
 
-    // Per-column weights: 1 at column centre, 0 elsewhere, smooth transitions.
-    // mask = wr * rCol + wg * gCol + wb * bCol  with each col = (1, .15, .15) etc.
-    // Simplified: each channel gets 1.0 inside its column, 0.15 outside.
-
-    if (type == 0) {
-        // Aperture grille — vertical RGB stripes (Trinitron-style)
-        float xf = fmod(p.x, 3.0);
-        float wr = smoothstep(0.0 - fw, 0.0 + fw, xf) * (1.0 - smoothstep(1.0 - fw, 1.0 + fw, xf));
-        float wg = smoothstep(1.0 - fw, 1.0 + fw, xf) * (1.0 - smoothstep(2.0 - fw, 2.0 + fw, xf));
-        float wb = smoothstep(2.0 - fw, 2.0 + fw, xf) * (1.0 - smoothstep(3.0 - fw, 3.0 + fw, xf));
-        mask = float3(wr + (1.0 - wr) * 0.15,
-                      wg + (1.0 - wg) * 0.15,
-                      wb + (1.0 - wb) * 0.15);
-
-    } else if (type == 1) {
-        // Shadow mask — offset dot triads with smooth circular dot falloff
-        float2 q  = p;
-        if (fmod(floor(q.y), 2.0) >= 1.0) q.x += 1.5;
-        float fw2 = fwidth(q.x) * 0.5;
-        float xf  = fmod(q.x, 3.0);
-        float wr  = smoothstep(0.0 - fw2, 0.0 + fw2, xf) * (1.0 - smoothstep(1.0 - fw2, 1.0 + fw2, xf));
-        float wg  = smoothstep(1.0 - fw2, 1.0 + fw2, xf) * (1.0 - smoothstep(2.0 - fw2, 2.0 + fw2, xf));
-        float wb  = smoothstep(2.0 - fw2, 2.0 + fw2, xf) * (1.0 - smoothstep(3.0 - fw2, 3.0 + fw2, xf));
-        mask = float3(wr + (1.0 - wr) * 0.15,
-                      wg + (1.0 - wg) * 0.15,
-                      wb + (1.0 - wb) * 0.15);
-        // Smooth circular phosphor dot shape within each cell
-        float2 cell = frac(q) * 2.0 - 1.0;
-        mask *= saturate(1.3 - dot(cell, cell) * 1.8);
-
+    if (type == 3) {
+        // Magenta / green — a 2-stripe aperture grille; the sharpest pattern
+        // at 1080p because it needs only two pixels per triad.
+        lit     = (fmod(floor(px.x / size), 2.0) < 1.0) ? float3(1, 0, 1) : float3(0, 1, 0);
+        litFrac = 0.5;
     } else {
-        // Slot mask — RGB stripes with a smooth horizontal gap every 2 rows
-        float xf = fmod(p.x, 3.0);
-        float wr = smoothstep(0.0 - fw, 0.0 + fw, xf) * (1.0 - smoothstep(1.0 - fw, 1.0 + fw, xf));
-        float wg = smoothstep(1.0 - fw, 1.0 + fw, xf) * (1.0 - smoothstep(2.0 - fw, 2.0 + fw, xf));
-        float wb = smoothstep(2.0 - fw, 2.0 + fw, xf) * (1.0 - smoothstep(3.0 - fw, 3.0 + fw, xf));
-        mask = float3(wr + (1.0 - wr) * 0.15,
-                      wg + (1.0 - wg) * 0.15,
-                      wb + (1.0 - wb) * 0.15);
-        // Smooth row gap: rows 0 bright, rows 1 dark, with AA at the boundary
-        float yf   = frac(p.y * 0.5);
-        float fw_y = fwidth(p.y * 0.5);
-        mask *= 1.0 - 0.9 * smoothstep(0.5 - fw_y, 0.5 + fw_y, yf);
+        float x = px.x;
+        if (type == 1 && fmod(floor(px.y / size), 2.0) >= 1.0)
+            x += round(1.5 * size);    // shadow mask: odd rows shift half a triad
+        float i = fmod(floor(x / size), 3.0);
+        lit     = (i < 1.0) ? float3(1, 0, 0) : ((i < 2.0) ? float3(0, 1, 0) : float3(0, 0, 1));
+        litFrac = 1.0 / 3.0;
+
+        if (type == 2) {
+            // Slot mask — stripes broken into slots, with neighbouring
+            // triads' breaks staggered by half a slot.
+            float slotH   = 4.0 * size;
+            float triad   = floor(px.x / (3.0 * size));
+            float y       = px.y + fmod(triad, 2.0) * slotH * 0.5;
+            float gapFrac = size / slotH;
+            rowGain = (fmod(floor(y), slotH) < size)
+                ? 1.0 - s
+                : lerp(1.0, 1.0 + s * gapFrac / (1.0 - gapFrac), maskCompensation);
+        }
     }
 
-    return lerp(float3(1, 1, 1), mask, shadowMaskIntensity);
+    float unlit   = 1.0 - s;
+    float litGain = lerp(1.0, 1.0 + s * (1.0 - litFrac) / litFrac, maskCompensation);
+    return lerp(float3(unlit, unlit, unlit), float3(litGain, litGain, litGain), lit) * rowGain;
 }
 
 // ---------------------------------------------------------------------------
 // TV static — per-pixel additive grain that flips at staticSpeed Hz.
-// Applied in gamma space after re-encoding, like real CRT noise on the display.
+// Applied in signal space after re-encoding, like real CRT noise on the display.
 // ---------------------------------------------------------------------------
 float TVStatic(float2 screenPos) {
     if (staticIntensity < 0.001) return 0.0;
@@ -307,20 +395,7 @@ float TVStatic(float2 screenPos) {
 }
 
 // ---------------------------------------------------------------------------
-// Colour grade — brightness / contrast / saturation / phosphor tint.
-// Runs in linear space for physically correct light math.
-// ---------------------------------------------------------------------------
-float3 ColorGrade(float3 col) {
-    col *= brightness;
-    col  = (col - 0.5) * contrast + 0.5;
-    float lum = dot(col, float3(0.2126, 0.7152, 0.0722));
-    col  = lerp(float3(lum, lum, lum), col, saturation);
-    col *= float3(phosphorR, phosphorG, phosphorB);
-    return col;
-}
-
-// ---------------------------------------------------------------------------
-// Blit pixel shader — pass-through, used in pass 1 to composite ImGui.
+// Blit pixel shader — pass-through, used in pass 1 to copy the capture.
 // ---------------------------------------------------------------------------
 float4 PS_Blit(VS_Output input) : SV_TARGET {
     return gCaptureTexture.Sample(gLinearClamp, input.uv);
@@ -355,44 +430,46 @@ VS_Output VS_Sprite(uint id : SV_VertexID) {
 
 // ---------------------------------------------------------------------------
 // Main CRT pixel shader
-// Pipeline order (gamma-correct throughout):
-//   distort → sample+convergence → linearize → bloom → diffuse → grade →
-//   gaussian scanlines → shadow mask → hum → vignette → flicker →
-//   re-encode → static
+// Pipeline (linear light between decode and re-encode):
+//   distort → corner mask → beam scanlines (decode + grade per line, UI
+//   composited) → + bloom/diffusion → phosphor mask → hum → vignette →
+//   flicker → re-encode → static
 // ---------------------------------------------------------------------------
 float4 PS_Main(VS_Output input) : SV_TARGET {
     // 1. Barrel distortion.
     float2 uv = BarrelDistort(input.uv);
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
+
+    // Screen-space derivatives first, while control flow is still uniform.
+    float edgeDist    = CornerDistance(uv);
+    float edgeAA      = max(fwidth(edgeDist), 1e-5);
+    float lineDensity = fwidth(uv.y) * max(scanlineCount, 1.0);
+
+    // 2. Rounded, anti-aliased picture edge.
+    float edge = saturate(0.5 - edgeDist / edgeAA);
+    if (edge <= 0.0)
         return float4(0.0, 0.0, 0.0, 1.0);
 
-    // 2. Sample with RGB convergence offset, then convert to linear light.
-    float3 col = ToLinear(SampleSource(uv));
+    // 3. Beam scanlines — produces graded linear light, UI included.
+    float3 nativeG = SampleSource(uv);
+    float4 ui      = gUITexture.Sample(gLinearClamp, uv);
+    float3 col     = Beam(uv, nativeG, ui, lineDensity);
 
-    // 3. Bloom and diffusion accumulate in linear space — bright pixels
-    //    contribute quadratically more glow (physically correct).
-    col += Bloom(uv);
-    col += Diffusion(uv);
+    // 4. Glow fills the gaps between lines before the mask is applied.
+    col += GradeLight(Bloom(uv) + Diffusion(uv));
 
-    // 4. Colour grade in linear space.
-    col = ColorGrade(col);
-
-    // 5. Gaussian scanlines in linear space — luminance-dependent beam width
-    //    means bright areas merge scanlines naturally (crt-geom behaviour).
-    col = GaussianScanline(col, input.pos.y);
-
-    // 6. Shadow mask — sub-pixel phosphor geometry.
+    // 5. Phosphor mask — sub-pixel phosphor geometry.
     col *= ShadowMask(input.pos.xy);
 
-    // 7. Analogue interference and lens effects.
+    // 6. Analogue interference and lens effects.
     col *= HumBar(uv.y);
     col *= Vignette(uv);
     col *= Flicker();
+    col *= edge;
 
-    // 8. Re-encode to gamma before output.
+    // 7. Re-encode for the monitor.
     col = ToGamma(col);
 
-    // 9. TV static — additive noise in display (gamma) space.
+    // 8. TV static — additive noise in signal space.
     col += TVStatic(input.pos.xy);
 
     return float4(saturate(col), 1.0);

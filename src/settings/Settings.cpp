@@ -57,6 +57,13 @@ void VisualToJson(const CRTSettings& s, json& j) {
     j["shadowMaskScale"]     = s.shadowMaskScale;
     j["shadowMaskType"]      = s.shadowMaskType;
     j["convergence"]         = s.convergence;
+    j["crtGamma"]            = s.crtGamma;
+    j["displayGamma"]        = s.displayGamma;
+    j["beamWidth"]           = s.beamWidth;
+    j["beamDynamics"]        = s.beamDynamics;
+    j["lineResolve"]         = s.lineResolve;
+    j["maskCompensation"]    = s.maskCompensation;
+    j["cornerRadius"]        = s.cornerRadius;
     j["cursorScale"]         = s.cursorScale;
     j["cursorThickness"]     = s.cursorThickness;
     j["cursorR"]             = s.cursorR;
@@ -104,6 +111,13 @@ void VisualFromJson(const json& j, CRTSettings& s) {
     getF("shadowMaskScale",     s.shadowMaskScale);
     getF("shadowMaskType",      s.shadowMaskType);
     getF("convergence",         s.convergence);
+    getF("crtGamma",            s.crtGamma);
+    getF("displayGamma",        s.displayGamma);
+    getF("beamWidth",           s.beamWidth);
+    getF("beamDynamics",        s.beamDynamics);
+    getF("lineResolve",         s.lineResolve);
+    getF("maskCompensation",    s.maskCompensation);
+    getF("cornerRadius",        s.cornerRadius);
     getF("cursorScale",         s.cursorScale);
     getF("cursorThickness",     s.cursorThickness);
     getF("cursorR",             s.cursorR);

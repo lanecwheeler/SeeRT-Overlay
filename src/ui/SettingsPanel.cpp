@@ -322,6 +322,55 @@ static void DrawAudioDeviceCombo(const AudioDevs& devs,
 }
 
 // ---------------------------------------------------------------------------
+// Shader controls shared by every style's sections.
+// ---------------------------------------------------------------------------
+static const char* kMaskTypeNames[] = {
+    "Aperture Grille", "Shadow Mask", "Slot Mask", "Magenta / Green"
+};
+static constexpr int kMaskTypeCount = 4;
+static constexpr const char* kMaskTypeTip =
+    "Aperture Grille — vertical RGB stripes (Trinitron-style).\n"
+    "Shadow Mask — dot triads, alternate rows offset.\n"
+    "Slot Mask — stripes broken into staggered slots.\n"
+    "Magenta / Green — 2-pixel stripes; the sharpest choice at 1080p.";
+
+// GEOMETRY — after Convergence.
+static void DrawCornerControl(CRTSettings& s) {
+    ImGui::SliderFloat("Corners", &s.cornerRadius, 0.0f, 0.25f, "%.3f");
+    Tip("Rounds the corners of the picture like a CRT tube, with a soft anti-aliased edge.");
+}
+
+// SCANLINES — after Count.
+static void DrawBeamControls(CRTSettings& s) {
+    ImGui::SliderFloat("Beam Width",    &s.beamWidth,    0.1f, 0.5f, "%.2f");
+    Tip("Thickness of the electron beam for dark lines — lower gives deeper gaps between lines.");
+    ImGui::SliderFloat("Beam Dynamics", &s.beamDynamics, 0.0f, 1.0f, "%.2f");
+    Tip("How much brighter lines widen.  Real beams spread with brightness, so scanlines\n"
+        "fade in bright areas and stay crisp in dark ones.");
+    ImGui::SliderFloat("Resolve",       &s.lineResolve,  0.0f, 1.0f, "%.2f");
+    Tip("How much each line takes on a single colour from its band of the picture, like a\n"
+        "real low-resolution signal.  0 keeps full detail under the lines; 1 is most\n"
+        "authentic but softens fine detail such as small text.  Set Count to the content's\n"
+        "line count (e.g. 240 for retro consoles) for the best match.");
+}
+
+// SHADOW MASK — after Scale.
+static void DrawMaskCompensation(CRTSettings& s) {
+    ImGui::SliderFloat("Compensation##sm", &s.maskCompensation, 0.0f, 1.0f, "%.2f");
+    Tip("Brightens lit phosphors to make up for the light the mask blocks.\n"
+        "1 keeps average brightness; 0 lets the mask darken the picture.");
+}
+
+// COLOUR — after Saturation.
+static void DrawGammaControls(CRTSettings& s) {
+    ImGui::SliderFloat("CRT Gamma",     &s.crtGamma,     1.8f, 3.0f, "%.2f");
+    Tip("How the simulated tube turns signal into light.  Real CRTs are around 2.4;\n"
+        "higher deepens shadows and midtones.");
+    ImGui::SliderFloat("Display Gamma", &s.displayGamma, 1.8f, 3.0f, "%.2f");
+    Tip("Gamma used to encode the result for your monitor — 2.2 for most displays.");
+}
+
+// ---------------------------------------------------------------------------
 // Custom cursor image controls — shared by every style's Cursor section.
 // The cursor state is set by SettingsPanel::Draw for the duration of the call
 // (threading it through every themed draw function would touch all of them).
@@ -420,12 +469,15 @@ static void DrawSettingsBody(
     Tip("Scales the image inward to fill the black corners produced by barrel distortion.");
     ImGui::SliderFloat("Convergence",  &s.convergence,      0.0f,  1.0f,   "%.2f");
     Tip("RGB channel misalignment — simulates lateral chromatic aberration from misaligned electron guns.");
+    DrawCornerControl(s);
 
     Sec("SCANLINES");
     ImGui::SliderFloat("Intensity",     &s.scanlineIntensity, 0.0f,  1.0f,   "%.2f");
-    Tip("Darkness of the gaps between horizontal scanlines — 0 is flat, 1 is maximum dark lines.");
+    Tip("Strength of the scanline beam profile — 0 is a flat picture, 1 is fully separated lines.");
     ImGui::SliderFloat("Count",         &s.scanlineCount,     200.f, 1200.f, "%.0f");
-    Tip("Number of scanline pairs across the screen — higher values match higher-resolution CRT displays.");
+    Tip("Number of lines across the picture height — 240 for retro consoles, 480 for DVD-era content.\n"
+        "Scanlines fade out automatically if they get too fine for your monitor to show.");
+    DrawBeamControls(s);
     ImGui::SliderFloat("Hum Intensity", &s.humBarIntensity,   0.0f,  1.0f,   "%.2f");
     Tip("Strength of rolling brightness bands simulating mains-frequency (50/60 Hz) interference.");
     ImGui::SliderFloat("Hum Speed",     &s.humBarSpeed,       0.0f,  2.0f,   "%.2f");
@@ -463,19 +515,17 @@ static void DrawSettingsBody(
 
     Sec("SHADOW MASK");
     {
-        static const char* kMaskTypes[] = { "Aperture Grille", "Shadow Mask", "Slot Mask" };
         int t = (int)s.shadowMaskType;
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-        if (ImGui::Combo("##masktype", &t, kMaskTypes, 3))
+        if (ImGui::Combo("##masktype", &t, kMaskTypeNames, kMaskTypeCount))
             s.shadowMaskType = (float)t;
-        Tip("Aperture Grille — vertical RGB stripes (Trinitron-style).\n"
-            "Shadow Mask — offset dot triads.\n"
-            "Slot Mask — stripes with a horizontal black gap every other row.");
+        Tip(kMaskTypeTip);
     }
     ImGui::SliderFloat("Intensity##sm", &s.shadowMaskIntensity, 0.0f, 1.0f, "%.2f");
     Tip("How strongly the sub-pixel pattern modulates the image — 0 is off, 1 is full mask.");
-    ImGui::SliderFloat("Scale##sm",     &s.shadowMaskScale,     0.5f, 4.0f, "%.1f px");
-    Tip("Width of each phosphor cell in screen pixels — try 1.5-2.0 to make the pattern clearly visible.");
+    ImGui::SliderFloat("Scale##sm",     &s.shadowMaskScale,     1.0f, 4.0f, "%.0f px");
+    Tip("Screen pixels per phosphor stripe.  1 px matches the panel's own subpixels best.");
+    DrawMaskCompensation(s);
 
     Sec("COLOUR");
     ImGui::SliderFloat("Brightness",   &s.brightness,       0.5f,  2.0f,   "%.2f");
@@ -484,6 +534,7 @@ static void DrawSettingsBody(
     Tip("Contrast strength pivoted around mid-grey — above 1.0 increases light/dark separation.");
     ImGui::SliderFloat("Saturation",   &s.saturation,       0.0f,  2.0f,   "%.2f");
     Tip("Colour saturation — 0 is greyscale, 1.0 is original, 2.0 is double-saturated.");
+    DrawGammaControls(s);
     {
         float col[3] = { s.phosphorR, s.phosphorG, s.phosphorB };
         if (ImGui::ColorEdit3("Phosphor##ph", col,
@@ -649,12 +700,14 @@ static void DrawSectionContent(
         Tip("Scale image inward to fill barrel-distortion corners.");
         ImGui::SliderFloat("Convergence",  &s.convergence, 0.0f, 1.0f, "%.2f");
         Tip("RGB channel misalignment — lateral chromatic aberration.");
+        DrawCornerControl(s);
         break;
     case 3:
         ImGui::SliderFloat("Intensity",     &s.scanlineIntensity, 0.0f,    1.0f,   "%.2f");
-        Tip("Darkness of scanline gaps.");
+        Tip("Scanline beam profile strength.");
         ImGui::SliderFloat("Count",         &s.scanlineCount,     200.f, 1200.f,   "%.0f");
-        Tip("Number of scanline pairs across the screen.");
+        Tip("Lines across the picture height (240 = retro consoles).");
+        DrawBeamControls(s);
         ImGui::SliderFloat("Hum Intensity", &s.humBarIntensity,   0.0f,    1.0f,   "%.2f");
         Tip("Rolling brightness band strength.");
         ImGui::SliderFloat("Hum Speed",     &s.humBarSpeed,       0.0f,    2.0f,   "%.2f");
@@ -691,15 +744,15 @@ static void DrawSectionContent(
         Tip("Grain refresh rate.");
         break;
     case 9: {
-        static const char* kMaskTypes[] = { "Aperture Grille", "Shadow Mask", "Slot Mask" };
         int t = (int)s.shadowMaskType;
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-        if (ImGui::Combo("##masktype", &t, kMaskTypes, 3)) s.shadowMaskType = (float)t;
-        Tip("Aperture Grille / Shadow Mask / Slot Mask");
+        if (ImGui::Combo("##masktype", &t, kMaskTypeNames, kMaskTypeCount)) s.shadowMaskType = (float)t;
+        Tip(kMaskTypeTip);
         ImGui::SliderFloat("Intensity##sm", &s.shadowMaskIntensity, 0.0f, 1.0f, "%.2f");
         Tip("Sub-pixel pattern strength.");
-        ImGui::SliderFloat("Scale##sm",     &s.shadowMaskScale,     0.5f, 4.0f, "%.1f px");
-        Tip("Phosphor cell width in pixels.");
+        ImGui::SliderFloat("Scale##sm",     &s.shadowMaskScale,     1.0f, 4.0f, "%.0f px");
+        Tip("Screen pixels per phosphor stripe.  1 px matches the panel's own subpixels best.");
+        DrawMaskCompensation(s);
         break;
     }
     case 10: {
@@ -709,6 +762,7 @@ static void DrawSectionContent(
         Tip("Light/dark separation.");
         ImGui::SliderFloat("Saturation", &s.saturation, 0.0f, 2.0f, "%.2f");
         Tip("Colour saturation.");
+        DrawGammaControls(s);
         float col[3] = { s.phosphorR, s.phosphorG, s.phosphorB };
         if (ImGui::ColorEdit3("Phosphor##ph", col,
                 ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_PickerHueBar)) {
@@ -1271,12 +1325,15 @@ static SettingsPanel::DrawResult DrawDefault(CRTSettings& s,
         Tip("Scales the image inward to fill the black corners produced by barrel distortion.");
         ImGui::SliderFloat("Convergence", &s.convergence, 0.0f, 1.0f, "%.2f");
         Tip("RGB channel misalignment — simulates lateral chromatic aberration from misaligned electron guns.");
+        DrawCornerControl(s);
     }
     if (ImGui::CollapsingHeader("Scanlines", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SliderFloat("Intensity",     &s.scanlineIntensity, 0.0f,  1.0f,   "%.2f");
-        Tip("Darkness of the gaps between horizontal scanlines — 0 is flat, 1 is maximum dark lines.");
+        Tip("Strength of the scanline beam profile — 0 is a flat picture, 1 is fully separated lines.");
         ImGui::SliderFloat("Count",         &s.scanlineCount,     200.f, 1200.f, "%.0f");
-        Tip("Number of scanline pairs across the screen — higher values match higher-resolution CRT displays.");
+        Tip("Number of lines across the picture height — 240 for retro consoles, 480 for DVD-era content.\n"
+            "Scanlines fade out automatically if they get too fine for your monitor to show.");
+        DrawBeamControls(s);
         ImGui::SliderFloat("Hum Intensity", &s.humBarIntensity,   0.0f,  1.0f,   "%.2f");
         Tip("Strength of rolling brightness bands simulating mains-frequency (50/60 Hz) interference.");
         ImGui::SliderFloat("Hum Speed",     &s.humBarSpeed,       0.0f,  2.0f,   "%.2f");
@@ -1313,18 +1370,16 @@ static SettingsPanel::DrawResult DrawDefault(CRTSettings& s,
         Tip("How many times per second the grain pattern randomises — higher is more chaotic.");
     }
     if (ImGui::CollapsingHeader("Shadow Mask", ImGuiTreeNodeFlags_DefaultOpen)) {
-        static const char* kMaskTypes[] = { "Aperture Grille", "Shadow Mask", "Slot Mask" };
         int t = (int)s.shadowMaskType;
         ImGui::SetNextItemWidth(-1.f);
-        if (ImGui::Combo("Pattern##sm", &t, kMaskTypes, 3))
+        if (ImGui::Combo("Pattern##sm", &t, kMaskTypeNames, kMaskTypeCount))
             s.shadowMaskType = (float)t;
-        Tip("Aperture Grille — vertical RGB stripes (Trinitron-style).\n"
-            "Shadow Mask — offset dot triads.\n"
-            "Slot Mask — stripes with a horizontal black gap every other row.");
+        Tip(kMaskTypeTip);
         ImGui::SliderFloat("Intensity##sm", &s.shadowMaskIntensity, 0.0f, 1.0f, "%.2f");
         Tip("How strongly the sub-pixel pattern modulates the image — 0 is off, 1 is full mask.");
-        ImGui::SliderFloat("Scale##sm",     &s.shadowMaskScale,     0.5f, 4.0f, "%.1f px");
-        Tip("Width of each phosphor cell in screen pixels — try 1.5-2.0 to make the pattern clearly visible.");
+        ImGui::SliderFloat("Scale##sm",     &s.shadowMaskScale,     1.0f, 4.0f, "%.0f px");
+        Tip("Screen pixels per phosphor stripe.  1 px matches the panel's own subpixels best.");
+        DrawMaskCompensation(s);
     }
     if (ImGui::CollapsingHeader("Colour", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SliderFloat("Brightness",  &s.brightness, 0.5f, 2.0f, "%.2f");
@@ -1333,6 +1388,7 @@ static SettingsPanel::DrawResult DrawDefault(CRTSettings& s,
         Tip("Contrast strength pivoted around mid-grey — above 1.0 increases light/dark separation.");
         ImGui::SliderFloat("Saturation",  &s.saturation, 0.0f, 2.0f, "%.2f");
         Tip("Colour saturation — 0 is greyscale, 1.0 is original, 2.0 is double-saturated.");
+        DrawGammaControls(s);
         {
             float col[3] = { s.phosphorR, s.phosphorG, s.phosphorB };
             if (ImGui::ColorEdit3("Phosphor##ph", col,

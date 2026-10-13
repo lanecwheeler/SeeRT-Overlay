@@ -10,9 +10,9 @@ struct CRTSettings {
     float curvatureX        = 0.1f;   // 0–0.5  barrel/pincushion X
     float curvatureY        = 0.1f;   // 0–0.5  barrel/pincushion Y
     float zoom              = 1.05f;  // 1.0–2.0 compensate for distortion crop
-    float scanlineIntensity = 0.35f;  // 0–1    darkness of scanline gaps
+    float scanlineIntensity = 0.35f;  // 0–1    flat picture → full beam profile
 
-    float scanlineCount     = 500.0f; // 200–1200 number of scanline pairs
+    float scanlineCount     = 500.0f; // 200–1200 lines across the picture height
     float vignetteStrength  = 0.4f;   // 0–1    radial edge darkening
     float glowStrength      = 0.3f;   // 0–2    phosphor bloom
     float brightness        = 1.0f;   // 0.5–2.0
@@ -37,10 +37,20 @@ struct CRTSettings {
     float staticSpeed         = 12.0f; // 1–60  grain pattern flips per second
     float shadowMaskIntensity = 0.15f; // 0–1   sub-pixel mask strength
 
-    float shadowMaskScale     = 1.5f;  // 0.5–4 pattern scale (screen pixels per cell)
-    float shadowMaskType      = 0.0f;  // 0=aperture grille, 1=shadow mask, 2=slot mask
+    float shadowMaskScale     = 1.0f;  // 1–4   screen pixels per phosphor stripe (rounded)
+    float shadowMaskType      = 0.0f;  // 0=aperture grille, 1=shadow mask, 2=slot mask, 3=magenta/green
     float humBarFrequency     = 3.0f;  // 0.5–20  number of visible hum bands on screen
-    float convergence         = 0.0f;  // 0–1     RGB horizontal misalignment (chromatic aberration)
+    float convergence         = 0.0f;  // 0–1     RGB horizontal misalignment, growing toward the edges
+
+    float crtGamma            = 2.4f;  // 1.8–3.0 CRT decoding gamma (signal → light)
+    float displayGamma        = 2.2f;  // 1.8–3.0 gamma used to re-encode for this monitor
+    float beamWidth           = 0.25f; // 0.1–0.5 beam width of dark lines, in line heights
+    float beamDynamics        = 0.6f;  // 0–1     how much brighter lines widen
+
+    float lineResolve         = 0.0f;  // 0–1     0 = full detail under the lines, 1 = one colour per line
+    float maskCompensation    = 0.75f; // 0–1     brighten lit phosphors to offset the mask's light loss
+    float cornerRadius        = 0.03f; // 0–0.25  rounded tube corners, fraction of picture height
+    float shaderPad0          = 0.0f;  // keeps the constant buffer a multiple of 16 bytes
 
     // UI-only — not uploaded to the GPU constant buffer.
     // 0 = CRT OSD  1 = Simple  2 = N64  3 = Camcorder  4 = DOS Terminal  5 = VCR

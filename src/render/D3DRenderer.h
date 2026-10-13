@@ -106,6 +106,12 @@ private:
     ComPtr<ID3D11RenderTargetView>     m_intermediateRTV;
     ComPtr<ID3D11ShaderResourceView>   m_intermediateSRV;
 
+    // UI layer — ImGui + cursor sprites (premultiplied alpha), composited by
+    // the CRT pass on top of the picture.
+    ComPtr<ID3D11Texture2D>            m_uiTex;
+    ComPtr<ID3D11RenderTargetView>     m_uiRTV;
+    ComPtr<ID3D11ShaderResourceView>   m_uiSRV;
+
     // Stream window swap chain (optional)
     ComPtr<IDXGISwapChain1>            m_streamSwapChain;
     ComPtr<ID3D11RenderTargetView>     m_streamRtv;
