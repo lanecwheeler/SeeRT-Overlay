@@ -8,4 +8,7 @@ namespace StyleFonts {
     inline ImFont* chakraPetch = nullptr;  // Camcorder — ChakraPetch-Regular.ttf,   14 px
     inline ImFont* metalMania  = nullptr;  // Sword & Sorcery titles — MetalMania-Regular.ttf
     inline ImFont* cinzel      = nullptr;  // Sword & Sorcery text   — CinzelDecorative-Bold.ttf
+    inline ImFont* bedstead    = nullptr;  // Teletext       — Bedstead.otf (SAA5050 recreation)
+    inline ImFont* shareTech   = nullptr;  // Vector Monitor — ShareTechMono-Regular.ttf
+    inline ImFont* pressStart  = nullptr;  // Arcade Service — PressStart2P-Regular.ttf
 }

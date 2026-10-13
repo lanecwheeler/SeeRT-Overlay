@@ -483,6 +483,159 @@ static void ApplySorceryStyle() {
     c[ImGuiCol_NavHighlight]         = ImVec4(0.67f, 0.31f, 1.00f, 0.80f);
 }
 
+// Teletext — the eight teletext colours, square everything (see the
+// teletext namespace in SettingsPanel.cpp).
+static void ApplyTeletextStyle() {
+    ImGui::GetIO().FontGlobalScale = 1.0f;
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding    = 0.f;
+    style.ChildRounding     = 0.f;
+    style.FrameRounding     = 0.f;
+    style.GrabRounding      = 0.f;
+    style.ScrollbarRounding = 0.f;
+    style.TabRounding       = 0.f;
+    style.PopupRounding     = 0.f;
+    style.WindowBorderSize  = 1.f;
+    style.PopupBorderSize   = 1.f;
+    style.FrameBorderSize   = 0.f;
+    style.FramePadding      = ImVec2(6.f, 3.f);
+    style.ItemSpacing       = ImVec2(8.f, 4.f);
+    style.ItemInnerSpacing  = ImVec2(8.f, 4.f);
+    style.GrabMinSize       = 12.f;
+    style.ScrollbarSize     = 12.f;
+    style.WindowPadding     = ImVec2(12.f, 10.f);
+
+    ImVec4* c = style.Colors;
+    c[ImGuiCol_WindowBg]             = ImVec4(0.00f, 0.00f, 0.00f, 1.00f);
+    c[ImGuiCol_ChildBg]              = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_PopupBg]              = ImVec4(0.00f, 0.00f, 0.00f, 1.00f);
+    c[ImGuiCol_Border]               = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+    c[ImGuiCol_BorderShadow]         = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_Text]                 = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+    c[ImGuiCol_TextDisabled]         = ImVec4(0.00f, 1.00f, 1.00f, 1.00f); // cyan
+    c[ImGuiCol_FrameBg]              = ImVec4(0.00f, 0.00f, 0.80f, 1.00f); // blue
+    c[ImGuiCol_FrameBgHovered]       = ImVec4(0.00f, 0.00f, 1.00f, 1.00f);
+    c[ImGuiCol_FrameBgActive]        = ImVec4(0.80f, 0.00f, 0.80f, 1.00f); // magenta
+    c[ImGuiCol_SliderGrab]           = ImVec4(1.00f, 1.00f, 0.00f, 1.00f); // yellow
+    c[ImGuiCol_SliderGrabActive]     = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+    c[ImGuiCol_CheckMark]            = ImVec4(1.00f, 1.00f, 0.00f, 1.00f);
+    c[ImGuiCol_Button]               = ImVec4(0.00f, 0.00f, 0.80f, 1.00f);
+    c[ImGuiCol_ButtonHovered]        = ImVec4(0.80f, 0.00f, 0.80f, 1.00f);
+    c[ImGuiCol_ButtonActive]         = ImVec4(1.00f, 0.00f, 0.00f, 1.00f); // red
+    c[ImGuiCol_Header]               = ImVec4(0.00f, 0.00f, 0.80f, 1.00f);
+    c[ImGuiCol_HeaderHovered]        = ImVec4(0.80f, 0.00f, 0.80f, 1.00f);
+    c[ImGuiCol_HeaderActive]         = ImVec4(1.00f, 0.00f, 0.00f, 1.00f);
+    c[ImGuiCol_Separator]            = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
+    c[ImGuiCol_ScrollbarBg]          = ImVec4(0.00f, 0.00f, 0.00f, 1.00f);
+    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.00f, 0.00f, 1.00f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(1.00f, 1.00f, 0.00f, 1.00f);
+    c[ImGuiCol_ModalWindowDimBg]     = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
+    c[ImGuiCol_NavHighlight]         = ImVec4(1.00f, 1.00f, 0.00f, 1.00f);
+}
+
+// Vector Monitor — glowing phosphor lines on black: outlined frames, thin
+// grabs, no fills (see the vector namespace in SettingsPanel.cpp).
+static void ApplyVectorStyle() {
+    ImGui::GetIO().FontGlobalScale = 1.0f;
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding    = 0.f;
+    style.ChildRounding     = 0.f;
+    style.FrameRounding     = 0.f;
+    style.GrabRounding      = 0.f;
+    style.ScrollbarRounding = 0.f;
+    style.TabRounding       = 0.f;
+    style.PopupRounding     = 0.f;
+    style.WindowBorderSize  = 1.f;
+    style.PopupBorderSize   = 1.f;
+    style.FrameBorderSize   = 1.f;
+    style.FramePadding      = ImVec2(8.f, 5.f);
+    style.ItemSpacing       = ImVec2(10.f, 10.f);
+    style.ItemInnerSpacing  = ImVec2(8.f, 6.f);
+    style.GrabMinSize       = 6.f;
+    style.ScrollbarSize     = 10.f;
+    style.WindowPadding     = ImVec2(14.f, 12.f);
+
+    ImVec4* c = style.Colors;
+    c[ImGuiCol_WindowBg]             = ImVec4(0.00f, 0.01f, 0.02f, 0.97f);
+    c[ImGuiCol_ChildBg]              = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_PopupBg]              = ImVec4(0.00f, 0.01f, 0.02f, 0.97f);
+    c[ImGuiCol_Border]               = ImVec4(0.55f, 0.88f, 1.00f, 0.85f); // phosphor
+    c[ImGuiCol_BorderShadow]         = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_Text]                 = ImVec4(0.72f, 0.92f, 1.00f, 1.00f);
+    c[ImGuiCol_TextDisabled]         = ImVec4(0.38f, 0.56f, 0.68f, 1.00f);
+    c[ImGuiCol_FrameBg]              = ImVec4(0.00f, 0.02f, 0.04f, 0.70f);
+    c[ImGuiCol_FrameBgHovered]       = ImVec4(0.04f, 0.14f, 0.20f, 0.80f);
+    c[ImGuiCol_FrameBgActive]        = ImVec4(0.08f, 0.24f, 0.32f, 0.90f);
+    c[ImGuiCol_SliderGrab]           = ImVec4(0.66f, 0.94f, 1.00f, 1.00f);
+    c[ImGuiCol_SliderGrabActive]     = ImVec4(1.00f, 0.93f, 0.47f, 1.00f); // hot yellow
+    c[ImGuiCol_CheckMark]            = ImVec4(0.66f, 0.94f, 1.00f, 1.00f);
+    c[ImGuiCol_Button]               = ImVec4(0.00f, 0.02f, 0.04f, 0.70f);
+    c[ImGuiCol_ButtonHovered]        = ImVec4(0.06f, 0.20f, 0.26f, 0.90f);
+    c[ImGuiCol_ButtonActive]         = ImVec4(0.12f, 0.32f, 0.40f, 1.00f);
+    c[ImGuiCol_Header]               = ImVec4(0.06f, 0.20f, 0.26f, 0.90f);
+    c[ImGuiCol_HeaderHovered]        = ImVec4(0.10f, 0.28f, 0.36f, 0.90f);
+    c[ImGuiCol_HeaderActive]         = ImVec4(0.14f, 0.36f, 0.44f, 1.00f);
+    c[ImGuiCol_Separator]            = ImVec4(0.55f, 0.88f, 1.00f, 0.60f);
+    c[ImGuiCol_ScrollbarBg]          = ImVec4(0.00f, 0.00f, 0.00f, 0.40f);
+    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.35f, 0.60f, 0.72f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.55f, 0.88f, 1.00f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(1.00f, 0.93f, 0.47f, 1.00f);
+    c[ImGuiCol_ModalWindowDimBg]     = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
+    c[ImGuiCol_NavHighlight]         = ImVec4(1.00f, 0.93f, 0.47f, 1.00f);
+}
+
+// Arcade Service — a coin-op test-mode screen: black, white and primary
+// colours, chunky square frames (see the arcade namespace in SettingsPanel.cpp).
+static void ApplyArcadeStyle() {
+    ImGui::GetIO().FontGlobalScale = 1.0f;
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding    = 0.f;
+    style.ChildRounding     = 0.f;
+    style.FrameRounding     = 0.f;
+    style.GrabRounding      = 0.f;
+    style.ScrollbarRounding = 0.f;
+    style.TabRounding       = 0.f;
+    style.PopupRounding     = 0.f;
+    style.WindowBorderSize  = 2.f;
+    style.PopupBorderSize   = 2.f;
+    style.FrameBorderSize   = 0.f;
+    style.FramePadding      = ImVec2(8.f, 5.f);
+    style.ItemSpacing       = ImVec2(10.f, 8.f);
+    style.ItemInnerSpacing  = ImVec2(10.f, 6.f);
+    style.GrabMinSize       = 14.f;
+    style.ScrollbarSize     = 12.f;
+    style.WindowPadding     = ImVec2(12.f, 10.f);
+
+    ImVec4* c = style.Colors;
+    c[ImGuiCol_WindowBg]             = ImVec4(0.00f, 0.00f, 0.00f, 0.98f);
+    c[ImGuiCol_ChildBg]              = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_PopupBg]              = ImVec4(0.00f, 0.00f, 0.00f, 0.98f);
+    c[ImGuiCol_Border]               = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+    c[ImGuiCol_BorderShadow]         = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_Text]                 = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+    c[ImGuiCol_TextDisabled]         = ImVec4(0.00f, 0.86f, 1.00f, 1.00f); // cyan
+    c[ImGuiCol_FrameBg]              = ImVec4(0.12f, 0.12f, 0.16f, 1.00f);
+    c[ImGuiCol_FrameBgHovered]       = ImVec4(0.18f, 0.18f, 0.42f, 1.00f);
+    c[ImGuiCol_FrameBgActive]        = ImVec4(0.26f, 0.26f, 0.62f, 1.00f);
+    c[ImGuiCol_SliderGrab]           = ImVec4(1.00f, 1.00f, 0.00f, 1.00f); // yellow
+    c[ImGuiCol_SliderGrabActive]     = ImVec4(1.00f, 0.16f, 0.16f, 1.00f); // red
+    c[ImGuiCol_CheckMark]            = ImVec4(0.16f, 1.00f, 0.24f, 1.00f); // green
+    c[ImGuiCol_Button]               = ImVec4(0.12f, 0.12f, 0.56f, 1.00f); // blue
+    c[ImGuiCol_ButtonHovered]        = ImVec4(0.22f, 0.22f, 0.82f, 1.00f);
+    c[ImGuiCol_ButtonActive]         = ImVec4(1.00f, 0.16f, 0.16f, 1.00f);
+    c[ImGuiCol_Header]               = ImVec4(0.12f, 0.12f, 0.56f, 1.00f);
+    c[ImGuiCol_HeaderHovered]        = ImVec4(0.22f, 0.22f, 0.82f, 1.00f);
+    c[ImGuiCol_HeaderActive]         = ImVec4(1.00f, 0.16f, 0.16f, 1.00f);
+    c[ImGuiCol_Separator]            = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
+    c[ImGuiCol_ScrollbarBg]          = ImVec4(0.00f, 0.00f, 0.00f, 1.00f);
+    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.22f, 0.22f, 0.82f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(1.00f, 1.00f, 0.00f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(1.00f, 0.16f, 0.16f, 1.00f);
+    c[ImGuiCol_ModalWindowDimBg]     = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
+    c[ImGuiCol_NavHighlight]         = ImVec4(1.00f, 1.00f, 0.00f, 1.00f);
+}
+
 static void ApplyCamcorderStyle() {
     ImGui::GetIO().FontGlobalScale = 1.0f;
     ImGuiStyle& style = ImGui::GetStyle();
@@ -828,6 +981,9 @@ void App::InitImGui(HWND hwnd) {
         StyleFonts::chakraPetch = io.Fonts->AddFontFromFileTTF(ttf("ChakraPetch-Regular.ttf").c_str(),   28.f);
         StyleFonts::metalMania  = io.Fonts->AddFontFromFileTTF(ttf("MetalMania-Regular.ttf").c_str(),    48.f);
         StyleFonts::cinzel      = io.Fonts->AddFontFromFileTTF(ttf("CinzelDecorative-Bold.ttf").c_str(), 20.f);
+        StyleFonts::bedstead    = io.Fonts->AddFontFromFileTTF(ttf("Bedstead.otf").c_str(),              20.f);
+        StyleFonts::shareTech   = io.Fonts->AddFontFromFileTTF(ttf("ShareTechMono-Regular.ttf").c_str(), 18.f);
+        StyleFonts::pressStart  = io.Fonts->AddFontFromFileTTF(ttf("PressStart2P-Regular.ttf").c_str(),  16.f);
     }
 }
 
@@ -1831,6 +1987,9 @@ void App::BeginImGuiFrame() {
         case 5:  ApplyVCRStyle();         break;
         case 6:  ApplyAdventure64Style(); break;
         case 7:  ApplySorceryStyle();     break;
+        case 8:  ApplyTeletextStyle();    break;
+        case 9:  ApplyVectorStyle();      break;
+        case 10: ApplyArcadeStyle();      break;
         default: ApplyCRTOSDStyle();      break;
     }
 

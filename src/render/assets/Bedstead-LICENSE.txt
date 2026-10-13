@@ -1,0 +1,7 @@
+Bedstead — a recreation of the Mullard SAA5050 teletext character generator font.
+By Ben Harris. Source: https://bjh21.me.uk/bedstead/
+
+SPDX-License-Identifier: CC0-1.0
+
+From the Bedstead page: "The program that generates Bedstead and all of the
+newly-designed glyphs have been released into the public domain."

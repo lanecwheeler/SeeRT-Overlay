@@ -7,6 +7,7 @@
 #include <cctype>    // toupper / tolower
 #include <cmath>
 #include <cstring>   // strcmp
+#include <ctime>     // teletext clock
 #include <string>
 #include <Windows.h>
 
@@ -28,9 +29,9 @@ static constexpr ImVec4 kSecBtnA { 0.10f, 0.80f, 0.50f, 1.00f };
 
 static const char* kStyleNames[] = {
     "CRT OSD", "Simple", "N64", "Camcorder", "DOS Terminal", "VCR", "64 Adventure",
-    "Sword & Sorcery"
+    "Sword & Sorcery", "Teletext", "Vector Monitor", "Arcade Service"
 };
-static constexpr int kStyleCount = 8;
+static constexpr int kStyleCount = 11;
 
 static const char* kSectionNames[] = {
     "CAPTURE SOURCE", "PRESETS", "GEOMETRY", "SCANLINES",
@@ -41,10 +42,15 @@ static constexpr int kSectionCount = 14;
 static constexpr int kMenuSection  = 13;   // style switcher + panel size
 static constexpr int kPresetsSection = 1;
 
-// Show a tooltip for the most recently drawn item.
+// Show a tooltip for the most recently drawn item, wrapped so wide fonts
+// (e.g. the arcade pixel font) don't stretch it across the screen.
 static void Tip(const char* text) {
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s", text);
+    if (!ImGui::IsItemHovered()) return;
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32.f);
+    ImGui::TextUnformatted(text);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
 }
 
 // ---------------------------------------------------------------------------
@@ -1663,9 +1669,11 @@ public:
     // Drawing.  a..b is the panel in screen space.
     virtual void   DrawPanel(ImDrawList* dl, ImVec2 a, ImVec2 b, int page, float t) = 0;
     virtual void   DrawTitle(ImDrawList* dl, ImVec2 a, ImVec2 b, const char* title, int page, float t) = 0;
-    // A grid button — settings groups (large), presets and styles.  True when clicked.
+    // A grid button — a settings group (main page), a preset or a menu style.
+    // True when clicked.
+    enum class Kind { Group, Preset, Style };
     virtual bool   GroupButton(const char* id, const char* label, ImVec2 size, int index,
-                               bool selected, bool large) = 0;
+                               bool selected, Kind kind) = 0;
     virtual bool   BackButton(const char* id) = 0;     // drawn at the cursor
     virtual float  QuitWidth() const = 0;
     virtual bool   QuitButton(const char* id) = 0;     // drawn at the cursor
@@ -1723,11 +1731,14 @@ static SettingsPanel::DrawResult DrawPagedMenu(PagedMenuStyle& st, const char* w
     const ImVec2 pb(pa.x + panelW, pa.y + panelH);
 
     // Opening reveal: only a band through the middle shows, growing to full height.
-    const float reveal = st.OpenReveal(t - st.openTime);
+    const float reveal  = st.OpenReveal(t - st.openTime);
+    ImVec2      clipMin = pa, clipMax = pb;   // the visible part of the panel
     if (reveal < 1.f) {
         const float cy = (pa.y + pb.y) * 0.5f;
         const float hh = std::max(Sc(1.f), panelH * 0.5f * reveal);
-        ImGui::PushClipRect(ImVec2(pa.x, cy - hh), ImVec2(pb.x, cy + hh), false);
+        clipMin = ImVec2(pa.x, cy - hh);
+        clipMax = ImVec2(pb.x, cy + hh);
+        ImGui::PushClipRect(clipMin, clipMax, false);
     }
 
     st.DrawPanel(dl, pa, pb, st.page, t);
@@ -1761,7 +1772,7 @@ static SettingsPanel::DrawResult DrawPagedMenu(PagedMenuStyle& st, const char* w
                 gridCell(i);
                 ImGui::PushID(i);
                 if (st.GroupButton("##group", st.GroupLabel(i).c_str(), ImVec2(bw, Sc(st.GroupButtonHeight())),
-                                   i, false, true))
+                                   i, false, PagedMenuStyle::Kind::Group))
                     goTo(i);
                 ImGui::PopID();
             }
@@ -1770,7 +1781,8 @@ static SettingsPanel::DrawResult DrawPagedMenu(PagedMenuStyle& st, const char* w
             for (int i = 0; i < static_cast<int>(presets.size()); ++i) {
                 gridCell(i);
                 ImGui::PushID(i);
-                if (st.GroupButton("##preset", presets[i].name.c_str(), itemSize, i, false, false)) {
+                if (st.GroupButton("##preset", presets[i].name.c_str(), itemSize, i, false,
+                                   PagedMenuStyle::Kind::Preset)) {
                     result.applyPreset    = true;
                     result.presetSettings = presets[i].settings;
                 }
@@ -1784,7 +1796,8 @@ static SettingsPanel::DrawResult DrawPagedMenu(PagedMenuStyle& st, const char* w
             for (int i = 0; i < kStyleCount; ++i) {
                 gridCell(i);
                 ImGui::PushID(i);
-                if (st.GroupButton("##style", kStyleNames[i], itemSize, i, s.menuStyle == i, false))
+                if (st.GroupButton("##style", kStyleNames[i], itemSize, i, s.menuStyle == i,
+                                   PagedMenuStyle::Kind::Style))
                     s.menuStyle = i;
                 ImGui::PopID();
             }
@@ -1822,7 +1835,7 @@ static SettingsPanel::DrawResult DrawPagedMenu(PagedMenuStyle& st, const char* w
     Tip("Quit the overlay application entirely.");
 
     // Close button.  It may sit in the window padding, so widen the clip rect to reach it.
-    ImGui::PushClipRect(pa, pb, false);
+    ImGui::PushClipRect(clipMin, clipMax, false);
     if (st.CloseButton("##close", st.CloseCenter(pa, pb))) s.menuVisible = false;
     Tip("Close the settings panel (Ctrl+Shift+C to re-open).");
     ImGui::PopClipRect();
@@ -2072,8 +2085,9 @@ public:
         }
     }
 
-    bool GroupButton(const char* id, const char* label, ImVec2 size, int index, bool selected, bool large) override {
-        return BubbleButton(id, label, size, kPalette[(index / 2 + index) % 4], Sc(large ? 22.f : 19.f), selected);
+    bool GroupButton(const char* id, const char* label, ImVec2 size, int index, bool selected, Kind kind) override {
+        return BubbleButton(id, label, size, kPalette[(index / 2 + index) % 4],
+                            Sc(kind == Kind::Group ? 22.f : 19.f), selected);
     }
     bool   BackButton(const char* id) override { return Prompt(id, "B", kGreen, "BACK", Sc(20.f)); }
     float  QuitWidth() const override { return PromptWidth("C", "QUIT", Sc(20.f)); }
@@ -2509,8 +2523,8 @@ public:
         MoltenTitle(dl, size, ImVec2(a.x + (b.x - a.x - w) * 0.5f, a.y + Sc(28.f) + (full - size) * 0.5f), title, t);
     }
 
-    bool GroupButton(const char* id, const char* label, ImVec2 size, int, bool selected, bool large) override {
-        return Tablet(id, label, size, Sc(large ? 19.f : 17.f), selected);
+    bool GroupButton(const char* id, const char* label, ImVec2 size, int, bool selected, Kind kind) override {
+        return Tablet(id, label, size, Sc(kind == Kind::Group ? 19.f : 17.f), selected);
     }
     bool  BackButton(const char* id) override { return Tablet(id, "Back", FooterButton(), Sc(18.f), false, kStone, false); }
     float QuitWidth() const override { return FooterButton().x; }
@@ -2529,6 +2543,691 @@ private:
 };
 
 } // namespace sorcery
+
+// ---------------------------------------------------------------------------
+// Teletext layout — a Ceefax-style teletext page.
+//   • The page is a 40 × 25 grid of character cells in the eight teletext
+//     colours, set in Bedstead (a recreation of the SAA5050 teletext chip).
+//   • Header row: page number, service name, date and a ticking clock.  On a
+//     page change the header's page counter rolls while the page "loads",
+//     then the page appears.
+//   • A double-height title banner with mosaic-graphics trim, coloured per
+//     page; the index lists every group with dot leaders to its page number.
+//   • The fastext row along the bottom: red Index (back) and cyan Quit.
+// ---------------------------------------------------------------------------
+namespace teletext {
+
+constexpr ImU32 kBlack   = IM_COL32(  0,   0,   0, 255);
+constexpr ImU32 kRed     = IM_COL32(255,   0,   0, 255);
+constexpr ImU32 kGreen   = IM_COL32(  0, 255,   0, 255);
+constexpr ImU32 kYellow  = IM_COL32(255, 255,   0, 255);
+constexpr ImU32 kBlue    = IM_COL32(  0,   0, 255, 255);
+constexpr ImU32 kMagenta = IM_COL32(255,   0, 255, 255);
+constexpr ImU32 kCyan    = IM_COL32(  0, 255, 255, 255);
+constexpr ImU32 kWhite   = IM_COL32(255, 255, 255, 255);
+
+constexpr int   kCols = 40, kRows = 25;
+constexpr float kSearchTime = 0.3f;   // seconds a page "loads" before it appears
+
+ImFont* Font() { return StyleFonts::bedstead ? StyleFonts::bedstead : ImGui::GetFont(); }
+
+// Text laid out in character cells from the top-left corner pos, each
+// character exactly cell.x wide and cell.y tall (two rows for double
+// height): drawn at the font size that gives the cell width, then its
+// vertices stretched to the cell height.
+void CellText(ImDrawList* dl, ImVec2 pos, ImVec2 cell, ImU32 col, const char* text) {
+    ImFont*     f       = Font();
+    const float advance = f->CalcTextSizeA(100.f, FLT_MAX, 0.f, "M").x / 100.f;   // per px of size
+    const float size    = cell.x / advance;
+    const int   v0      = dl->VtxBuffer.Size;
+    dl->AddText(f, size, pos, col, text);
+    const float k = cell.y / size;
+    for (int i = v0; i < dl->VtxBuffer.Size; ++i)
+        dl->VtxBuffer[i].pos.y = pos.y + (dl->VtxBuffer[i].pos.y - pos.y) * k;
+}
+
+// A mosaic character: a 2 × 3 grid of blocks, bit 0 top-left … bit 5
+// bottom-right.
+void Mosaic(ImDrawList* dl, ImVec2 p, ImVec2 cell, int bits, ImU32 col) {
+    const float bw = cell.x * 0.5f, bh = cell.y / 3.f;
+    for (int i = 0; i < 6; ++i)
+        if (bits & (1 << i)) {
+            const float x = p.x + (i % 2) * bw, y = p.y + (i / 2) * bh;
+            dl->AddRectFilled(ImVec2(x, y), ImVec2(x + bw, y + bh), col);
+        }
+}
+
+// The teletext look for the shared paged menu.
+class Style : public PagedMenuStyle {
+public:
+    ImVec2  PanelSize()   const override { return ImVec2(720.f, 600.f); }   // 40 × 25 cells of 18 × 24
+    ImVec2  Padding()     const override { return ImVec2(36.f, 0.f); }      // content starts two columns in
+    float   TitleSpace()  const override { return 92.f; }    // rows 0–3, less the item spacing
+    float   FooterSpace() const override { return 50.f; }
+    float   FooterRow()   const override { return 24.f; }    // the fastext row (row 24)
+    int     Columns()     const override { return 1; }
+    float   GroupButtonHeight() const override { return 20.f; }   // + 4 item spacing = one row
+    float   ItemButtonHeight()  const override { return 20.f; }
+    float   SliderWidth() const override { return 0.5f; }
+    ImFont* Font()        const override { return teletext::Font(); }
+    float   FontSize()    const override { return 18.f; }
+
+    // Once the page is found it paints in, top to bottom, in a blink.
+    float PageReveal(float t) const override { return std::clamp((t - kSearchTime) / 0.12f, 0.f, 1.f); }
+
+    void DrawPanel(ImDrawList* dl, ImVec2 a, ImVec2 b, int, float) override {
+        cell_ = ImVec2((b.x - a.x) / kCols, (b.y - a.y) / kRows);
+        dl->AddRectFilled(a, b, kBlack);
+        dl->AddRect(a, b, IM_COL32(70, 70, 70, 255));
+    }
+
+    void DrawTitle(ImDrawList* dl, ImVec2 a, ImVec2, const char* title, int pageIndex, float t) override {
+        const float since = t - pageTime;
+        const bool  found = since >= kSearchTime;
+        const int   num   = PageNumber(pageIndex);
+
+        // Header: requested page, service name with the (rolling) page
+        // counter, date, clock.
+        const time_t now = time(nullptr);
+        tm lt{};
+        localtime_s(&lt, &now);
+        char date[32], buf[64];
+        strftime(date, sizeof(date), "%a %d %b", &lt);
+        snprintf(buf, sizeof(buf), "P%03d", num);
+        CellText(dl, At(a, 1, 0), cell_, kWhite, buf);
+        snprintf(buf, sizeof(buf), "SeeRT %03d %s", found ? num : 100 + static_cast<int>(since * 230.f) % 100, date);
+        CellText(dl, At(a, 6, 0), cell_, kWhite, buf);
+        snprintf(buf, sizeof(buf), "%02d:%02d/%02d", lt.tm_hour, lt.tm_min, lt.tm_sec);
+        CellText(dl, At(a, 27, 0), cell_, kYellow, buf);
+        if (!found) return;
+
+        // Title banner, rows 1–2: mosaic staircases either side of a
+        // double-height title, coloured per page.
+        static constexpr ImU32 kBanner[3] = { kBlue, kRed, kMagenta };
+        static constexpr ImU32 kTrim[3]   = { kCyan, kYellow, kCyan };
+        static constexpr ImU32 kTitle[3]  = { kYellow, kWhite, kWhite };
+        const int k = (pageIndex + 1) % 3;
+        dl->AddRectFilled(At(a, 0, 1), At(a, kCols, 3), kBanner[k]);
+        static constexpr int kStairTop[6]    = { 0x00, 0x00, 0x30, 0x3C, 0x3F, 0x3F };
+        static constexpr int kStairBottom[6] = { 0x30, 0x3C, 0x3F, 0x3F, 0x3F, 0x3F };
+        for (int c = 0; c < 6; ++c) {
+            Mosaic(dl, At(a, 1 + c, 1), cell_, kStairTop[c],    kTrim[k]);
+            Mosaic(dl, At(a, 1 + c, 2), cell_, kStairBottom[c], kTrim[k]);
+            Mosaic(dl, At(a, 38 - c, 1), cell_, MirrorMosaic(kStairTop[c]),    kTrim[k]);
+            Mosaic(dl, At(a, 38 - c, 2), cell_, MirrorMosaic(kStairBottom[c]), kTrim[k]);
+        }
+        const int len = static_cast<int>(strlen(title));
+        CellText(dl, At(a, (kCols - len) / 2, 1), ImVec2(cell_.x, cell_.y * 2.f), kTitle[k], title);
+    }
+
+    // An index line: name, dot leaders, page number.  Hovering highlights the row.
+    bool GroupButton(const char* id, const char* label, ImVec2 size, int index, bool selected, Kind kind) override {
+        const ImVec2 pos     = ImGui::GetCursorScreenPos();
+        const bool   clicked = ImGui::InvisibleButton(id, size);
+        const bool   hovered = ImGui::IsItemHovered();
+        ImDrawList*  dl      = ImGui::GetWindowDrawList();
+
+        const float top  = pos.y - (cell_.y - size.y) * 0.5f;   // the whole character row
+        const int   cols = static_cast<int>(size.x / cell_.x);
+        const int   num  = (kind == Kind::Group ? 101 : kind == Kind::Preset ? 201 : 301) + index;
+        if (hovered) dl->AddRectFilled(ImVec2(pos.x, top), ImVec2(pos.x + cols * cell_.x, top + cell_.y), kBlue);
+
+        std::string name = label;
+        if (static_cast<int>(name.size()) > cols - 6) name.resize(cols - 6);
+        CellText(dl, ImVec2(pos.x, top), cell_, selected ? kGreen : hovered ? kYellow : kWhite, name.c_str());
+        const int dots = cols - static_cast<int>(name.size()) - 5;
+        if (dots > 0)
+            CellText(dl, ImVec2(pos.x + (name.size() + 1) * cell_.x, top), cell_, kCyan, std::string(dots, '.').c_str());
+        char n[8];
+        snprintf(n, sizeof(n), "%d", num);
+        CellText(dl, ImVec2(pos.x + (cols - 3) * cell_.x, top), cell_, hovered ? kWhite : kYellow, n);
+        return clicked;
+    }
+
+    bool  BackButton(const char* id) override { return Fastext(id, "Index", kRed); }
+    float QuitWidth() const override { return cell_.x * kFastextCells; }
+    bool  QuitButton(const char* id) override { return Fastext(id, "Quit", kCyan); }
+
+    void DrawFooter(ImDrawList* dl, ImVec2 a, ImVec2, int pageIndex, float) override {
+        const char* hint = pageIndex < 0 ? "Pick a page" : "Esc for index";
+        CellText(dl, ImVec2(a.x + (kCols - static_cast<int>(strlen(hint))) / 2 * cell_.x, a.y), cell_, kGreen, hint);
+    }
+
+    // A red three-cell box at the end of the header row.
+    ImVec2 CloseCenter(ImVec2 a, ImVec2 b) const override { return ImVec2(b.x - cell_.x * 1.5f, a.y + cell_.y * 0.5f); }
+    bool   CloseButton(const char* id, ImVec2 c) override {
+        const ImVec2 p(c.x - cell_.x * 1.5f, c.y - cell_.y * 0.5f);
+        ImGui::SetCursorScreenPos(p);
+        const bool clicked = ImGui::InvisibleButton(id, ImVec2(cell_.x * 3.f, cell_.y));
+        const bool hovered = ImGui::IsItemHovered();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p, ImVec2(p.x + cell_.x * 3.f, p.y + cell_.y), hovered ? kYellow : kRed);
+        CellText(dl, ImVec2(p.x + cell_.x, p.y), cell_, hovered ? kBlack : kWhite, "X");
+        return clicked;
+    }
+
+private:
+    static constexpr int kFastextCells = 8;
+
+    static int PageNumber(int pageIndex) { return pageIndex < 0 ? 100 : 101 + pageIndex; }
+
+    // Top-left of the cell at (col, row).
+    ImVec2 At(ImVec2 a, int col, int row) const { return ImVec2(a.x + col * cell_.x, a.y + row * cell_.y); }
+
+    // Swaps the left and right blocks of a mosaic character.
+    static int MirrorMosaic(int bits) {
+        int out = 0;
+        for (int i = 0; i < 6; ++i)
+            if (bits & (1 << i)) out |= 1 << (i ^ 1);
+        return out;
+    }
+
+    // A fastext link: coloured text, inverted when hovered.
+    bool Fastext(const char* id, const char* label, ImU32 col) {
+        const ImVec2 pos = ImGui::GetCursorScreenPos();
+        const ImVec2 size(cell_.x * kFastextCells, cell_.y);
+        const bool   clicked = ImGui::InvisibleButton(id, size);
+        const bool   hovered = ImGui::IsItemHovered();
+        ImDrawList*  dl      = ImGui::GetWindowDrawList();
+        if (hovered) dl->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), col);
+        CellText(dl, pos, cell_, hovered ? kBlack : col, label);
+        return clicked;
+    }
+
+    ImVec2 cell_ = ImVec2(18.f, 24.f);   // set from the panel each frame
+};
+
+} // namespace teletext
+
+// ---------------------------------------------------------------------------
+// Vector Monitor layout — an Asteroids / Tempest-style vector display.
+//   • Everything is drawn as glowing phosphor beams on black, with a stroke
+//     font built from line segments; no filled shapes.
+//   • A twinkling starfield with slowly tumbling wireframe asteroids behind.
+//   • Hovering a button points the little ship at it, thruster flickering.
+//   • The panel switches on like a CRT — a bright line opening to full
+//     height — and the footer keeps score: 150 points per page visited.
+// ---------------------------------------------------------------------------
+namespace vecmon {
+
+constexpr ImU32 kBeam = IM_COL32(170, 230, 255, 255);   // phosphor blue-white
+constexpr ImU32 kHot  = IM_COL32(255, 236, 120, 255);   // hover
+constexpr ImU32 kGo   = IM_COL32(110, 255, 150, 255);   // selected / back
+constexpr ImU32 kStop = IM_COL32(255,  96,  96, 255);   // quit / close
+constexpr ImU32 kDim  = IM_COL32( 80, 130, 175, 255);
+
+ImFont* Font() { return StyleFonts::shareTech ? StyleFonts::shareTech : ImGui::GetFont(); }
+
+// Stroke font: each glyph is a set of strokes through points on a 4 × 6 grid,
+// written "xy xy …"; "|" lifts the pen.  Lowercase draws as uppercase.
+const char* Glyph(char c) {
+    switch (toupper(static_cast<unsigned char>(c))) {
+    case 'A': return "06 02 20 42 46|03 43";
+    case 'B': return "06 00 30 41 42 33 03|33 44 45 36 06";
+    case 'C': return "40 00 06 46";
+    case 'D': return "06 00 20 42 44 26 06";
+    case 'E': return "40 00 06 46|03 33";
+    case 'F': return "40 00 06|03 33";
+    case 'G': return "30 00 06 46 43 23";
+    case 'H': return "00 06|40 46|03 43";
+    case 'I': return "00 40|20 26|06 46";
+    case 'J': return "40 44 26 16 04";
+    case 'K': return "00 06|40 03 46";
+    case 'L': return "00 06 46";
+    case 'M': return "06 00 23 40 46";
+    case 'N': return "06 00 46 40";
+    case 'O': return "00 40 46 06 00";
+    case 'P': return "06 00 40 43 03";
+    case 'Q': return "00 40 44 26 06 00|24 46";
+    case 'R': return "06 00 40 43 03|13 46";
+    case 'S': return "40 00 03 43 46 06";
+    case 'T': return "00 40|20 26";
+    case 'U': return "00 06 46 40";
+    case 'V': return "00 26 40";
+    case 'W': return "00 06 24 46 40";
+    case 'X': return "00 46|40 06";
+    case 'Y': return "00 23 40|23 26";
+    case 'Z': return "00 40 06 46";
+    case '0': return "00 40 46 06 00|06 40";
+    case '1': return "11 20 26|06 46";
+    case '2': return "00 40 43 03 06 46";
+    case '3': return "00 40 46 06|03 43";
+    case '4': return "00 03 43|40 46";
+    case '5': return "40 00 03 43 46 06";
+    case '6': return "00 06 46 43 03";
+    case '7': return "00 40 46";
+    case '8': return "00 40 46 06 00|03 43";
+    case '9': return "43 03 00 40 46";
+    case '-': return "13 33";
+    case '+': return "13 33|22 24";
+    case '.': return "26";
+    case ',': return "25 16";
+    case ':': return "22|25";
+    case '\'': return "20 21";
+    case '/': return "06 40";
+    case '(': return "30 12 14 36";
+    case ')': return "10 32 34 16";
+    case '<': return "30 03 36";
+    case '>': return "10 43 16";
+    case '&': return "46 02 11 21 32 05 16 26 44";
+    case '!': return "20 24|26";
+    case ' ': return "";
+    default:  return "00 40 42 23 24|26";   // '?'
+    }
+}
+
+// A glowing beam through pts (a dot for a single point): a wide faint halo,
+// a softer glow and a near-white core.  Drawn a segment at a time — thick
+// polylines grow long miter spikes at sharp corners — so the overlap makes
+// each vertex a touch brighter, like a real beam dwelling there.
+void Beam(ImDrawList* dl, const ImVec2* pts, int n, ImU32 col, float w, bool closed = false, float intensity = 1.f) {
+    const ImU32 core = WithAlpha(Mix(col, IM_COL32_WHITE, 0.45f), intensity);
+    if (n == 1) {
+        dl->AddCircleFilled(pts[0], w * 2.4f, WithAlpha(col, 0.16f * intensity), 8);
+        dl->AddCircleFilled(pts[0], w * 0.9f, core, 8);
+        return;
+    }
+    const int    segs     = closed ? n : n - 1;
+    const float  width[3] = { w * 5.f, w * 2.4f, w };
+    const ImU32  cols[3]  = { WithAlpha(col, 0.09f * intensity), WithAlpha(col, 0.26f * intensity), core };
+    for (int pass = 0; pass < 3; ++pass)
+        for (int i = 0; i < segs; ++i)
+            dl->AddLine(pts[i], pts[(i + 1) % n], cols[pass], width[pass]);
+}
+
+float TextWidth(float h, const char* text) {
+    const size_t n = strlen(text);
+    return n ? (n * 6.f - 2.f) * h / 6.f : 0.f;
+}
+
+// Stroke-font text, h tall, with its top-left at pos.
+void Text(ImDrawList* dl, ImVec2 pos, float h, ImU32 col, const char* text, float intensity = 1.f) {
+    const float u = h / 6.f, w = std::max(1.f, h * 0.075f);
+    for (int i = 0; text[i]; ++i) {
+        const float ox = pos.x + i * 6.f * u;
+        ImVec2 pts[16];
+        int    n = 0;
+        for (const char* p = Glyph(text[i]); ; ) {
+            if (*p == '|' || *p == '\0') {
+                if (n) Beam(dl, pts, n, col, w, false, intensity);
+                n = 0;
+                if (*p == '\0') break;
+                ++p;
+            } else if (*p == ' ') {
+                ++p;
+            } else {
+                if (n < 16) pts[n++] = ImVec2(ox + (p[0] - '0') * u, pos.y + (p[1] - '0') * u);
+                p += 2;
+            }
+        }
+    }
+}
+
+// The player's ship, nose at `nose`, pointing right; thruster flickering.
+void Ship(ImDrawList* dl, ImVec2 nose, float s, ImU32 col, float t) {
+    const ImVec2 hull[4] = { nose, ImVec2(nose.x - 2.f * s, nose.y - 0.9f * s),
+                             ImVec2(nose.x - 1.5f * s, nose.y), ImVec2(nose.x - 2.f * s, nose.y + 0.9f * s) };
+    Beam(dl, hull, 4, col, Sc(1.3f), true);
+    if (fmodf(t * 17.f, 1.f) < 0.65f) {
+        const ImVec2 flame[3] = { ImVec2(nose.x - 1.65f * s, nose.y - 0.4f * s),
+                                  ImVec2(nose.x - (2.5f + 0.4f * Hash(floorf(t * 30.f), 1.f)) * s, nose.y),
+                                  ImVec2(nose.x - 1.65f * s, nose.y + 0.4f * s) };
+        Beam(dl, flame, 3, kHot, Sc(1.1f));
+    }
+}
+
+// Rectangle with cut corners (clockwise), the outline of every button.
+void Bevel(ImVec2 a, ImVec2 b, float c, ImVec2 out[8]) {
+    out[0] = ImVec2(a.x + c, a.y);  out[1] = ImVec2(b.x - c, a.y);
+    out[2] = ImVec2(b.x, a.y + c);  out[3] = ImVec2(b.x, b.y - c);
+    out[4] = ImVec2(b.x - c, b.y);  out[5] = ImVec2(a.x + c, b.y);
+    out[6] = ImVec2(a.x, b.y - c);  out[7] = ImVec2(a.x, a.y + c);
+}
+
+// Outlined button with a stroke-font label (shrunk to fit).  True when clicked.
+bool Button(const char* id, const char* label, ImVec2 size, float textH, ImU32 col, bool selected = false) {
+    const ImVec2 pos     = ImGui::GetCursorScreenPos();
+    const bool   clicked = ImGui::InvisibleButton(id, size);
+    const bool   hovered = ImGui::IsItemHovered();
+    const bool   held    = ImGui::IsItemActive();
+    ImDrawList*  dl      = ImGui::GetWindowDrawList();
+
+    const ImU32 c = selected ? kGo : hovered ? kHot : col;
+    ImVec2 pts[8];
+    Bevel(pos, ImVec2(pos.x + size.x, pos.y + size.y), std::min(Sc(8.f), size.y * 0.3f), pts);
+    dl->AddConvexPolyFilled(pts, 8, IM_COL32(0, 3, 8, 235));   // no beam inside: rocks pass behind
+    if (hovered) dl->AddConvexPolyFilled(pts, 8, WithAlpha(c, 0.07f));
+    Beam(dl, pts, 8, c, Sc(held ? 1.8f : 1.2f), true, hovered || selected ? 1.f : 0.75f);
+
+    float       h = textH;
+    const float room = size.x - Sc(20.f);
+    float       w = TextWidth(h, label);
+    if (w > room) { h *= room / w; w = room; }
+    Text(dl, ImVec2(pos.x + (size.x - w) * 0.5f, pos.y + (size.y - h) * 0.5f), h, c, label,
+         hovered || selected ? 1.f : 0.8f);
+    return clicked;
+}
+
+// The vector-display look for the shared paged menu.
+class Style : public PagedMenuStyle {
+public:
+    ImVec2  PanelSize()   const override { return ImVec2(700.f, 680.f); }
+    ImVec2  Padding()     const override { return ImVec2(40.f, 26.f); }
+    float   TitleSpace()  const override { return 80.f; }
+    float   FooterSpace() const override { return 62.f; }
+    float   FooterRow()   const override { return 58.f; }
+    float   Gutter()      const override { return 40.f; }   // room for the ship
+    float   ColumnGap()   const override { return 52.f; }
+    float   GroupButtonHeight() const override { return 44.f; }
+    float   ItemButtonHeight()  const override { return 38.f; }
+    ImFont* Font()        const override { return vecmon::Font(); }
+    float   FontSize()    const override { return 18.f; }
+    std::string GroupLabel(int section) const override { return kSectionNames[section]; }
+
+    // Switches on like a CRT: a bright line opening to full height.
+    float OpenReveal(float t) const override { return std::clamp(t / 0.22f, 0.f, 1.f); }
+
+    void DrawPanel(ImDrawList* dl, ImVec2 a, ImVec2 b, int, float t) override {
+        dl->AddRectFilled(a, b, IM_COL32(0, 3, 8, 240));
+        dl->PushClipRect(a, b, true);
+
+        // Starfield.
+        for (int i = 0; i < 70; ++i) {
+            const ImVec2 p(a.x + Hash(static_cast<float>(i), 1.f) * (b.x - a.x),
+                           a.y + Hash(static_cast<float>(i), 2.f) * (b.y - a.y));
+            const float twinkle = 0.25f + 0.75f * (0.5f + 0.5f * sinf(t * (1.f + Hash(static_cast<float>(i), 3.f) * 3.f) + i));
+            dl->AddCircleFilled(p, Sc(0.9f), WithAlpha(kBeam, 0.35f * twinkle), 4);
+        }
+        // Tumbling asteroids, drifting and wrapping around the panel.
+        for (int r = 0; r < 4; ++r) {
+            const float fr     = static_cast<float>(r);
+            const float radius = Sc(18.f + 22.f * Hash(fr, 4.f));
+            const float spanX  = (b.x - a.x) + radius * 2.f, spanY = (b.y - a.y) + radius * 2.f;
+            float x = fmodf(Hash(fr, 7.f) * spanX + (Hash(fr, 5.f) - 0.5f) * Sc(30.f) * t, spanX);
+            float y = fmodf(Hash(fr, 8.f) * spanY + (Hash(fr, 6.f) - 0.5f) * Sc(30.f) * t, spanY);
+            if (x < 0.f) x += spanX;
+            if (y < 0.f) y += spanY;
+            const ImVec2 c(a.x - radius + x, a.y - radius + y);
+            const float  rot = t * (Hash(fr, 9.f) - 0.5f) * 1.2f;
+            ImVec2 pts[10];
+            for (int k = 0; k < 10; ++k) {
+                const float ang = rot + k * 0.6283185f;
+                const float rr  = radius * (0.72f + 0.28f * Hash(fr * 13.f + k, 10.f));
+                pts[k] = ImVec2(c.x + cosf(ang) * rr, c.y + sinf(ang) * rr);
+            }
+            Beam(dl, pts, 10, kDim, Sc(1.f), true, 0.5f);
+        }
+        dl->PopClipRect();
+
+        // Frame: a dim rectangle with bright corner brackets.
+        const ImVec2 i0(a.x + Sc(6.f), a.y + Sc(6.f)), i1(b.x - Sc(6.f), b.y - Sc(6.f));
+        const ImVec2 box[4] = { i0, ImVec2(i1.x, i0.y), i1, ImVec2(i0.x, i1.y) };
+        Beam(dl, box, 4, kDim, Sc(1.f), true, 0.7f);
+        const float L = Sc(28.f);
+        const ImVec2 corners[4][3] = {
+            { ImVec2(i0.x, i0.y + L), i0, ImVec2(i0.x + L, i0.y) },
+            { ImVec2(i1.x - L, i0.y), ImVec2(i1.x, i0.y), ImVec2(i1.x, i0.y + L) },
+            { ImVec2(i1.x, i1.y - L), i1, ImVec2(i1.x - L, i1.y) },
+            { ImVec2(i0.x + L, i1.y), ImVec2(i0.x, i1.y), ImVec2(i0.x, i1.y - L) } };
+        for (const auto& c : corners) Beam(dl, c, 3, kBeam, Sc(1.6f));
+    }
+
+    // Big stroke-font title with a faint beam flicker, underlined.
+    void DrawTitle(ImDrawList* dl, ImVec2 a, ImVec2 b, const char* title, int, float t) override {
+        float       h    = Sc(34.f);
+        const float maxW = (b.x - a.x) - Sc(160.f);
+        float       w    = TextWidth(h, title);
+        if (w > maxW) { h *= maxW / w; w = maxW; }
+        const float x = a.x + (b.x - a.x - w) * 0.5f, y = a.y + Sc(30.f);
+        Text(dl, ImVec2(x, y), h, kBeam, title, 0.9f + 0.1f * sinf(t * 37.f) * sinf(t * 13.f));
+        const ImVec2 line[2] = { ImVec2(x - Sc(24.f), a.y + Sc(78.f)), ImVec2(x + w + Sc(24.f), a.y + Sc(78.f)) };
+        Beam(dl, line, 2, kDim, Sc(1.f), false, 0.8f);
+    }
+
+    bool GroupButton(const char* id, const char* label, ImVec2 size, int, bool selected, Kind kind) override {
+        const ImVec2 pos     = ImGui::GetCursorScreenPos();
+        const bool   clicked = Button(id, label, size, Sc(kind == Kind::Group ? 14.f : 12.f), kBeam, selected);
+        if (ImGui::IsItemHovered())
+            Ship(ImGui::GetWindowDrawList(), ImVec2(pos.x - Sc(8.f), pos.y + size.y * 0.5f), Sc(9.f), kHot,
+                 static_cast<float>(ImGui::GetTime()));
+        return clicked;
+    }
+
+    bool  BackButton(const char* id) override { return Button(id, "< BACK", FooterButton(), Sc(13.f), kGo); }
+    float QuitWidth() const override { return FooterButton().x; }
+    bool  QuitButton(const char* id) override { return Button(id, "QUIT", FooterButton(), Sc(13.f), kStop); }
+
+    // Score (150 per page visited) and three reserve ships.
+    void DrawFooter(ImDrawList* dl, ImVec2 a, ImVec2 b, int pageIndex, float) override {
+        if (pageIndex != lastPage_) {
+            if (pageIndex >= 0) score_ += 150;
+            lastPage_ = pageIndex;
+        }
+        char buf[32];
+        snprintf(buf, sizeof(buf), "SCORE %06d", score_);
+        const float h = Sc(12.f), w = TextWidth(h, buf);
+        const float cx = (a.x + b.x) * 0.5f;
+        Text(dl, ImVec2(cx - w * 0.5f, a.y + Sc(4.f)), h, kBeam, buf, 0.85f);
+        for (int i = 0; i < 3; ++i) {
+            const float  s = Sc(5.f);
+            const ImVec2 n(cx - Sc(16.f) + i * Sc(16.f), a.y + Sc(24.f));
+            const ImVec2 up[4] = { n, ImVec2(n.x + 0.9f * s, n.y + 2.f * s), ImVec2(n.x, n.y + 1.5f * s),
+                                   ImVec2(n.x - 0.9f * s, n.y + 2.f * s) };
+            Beam(dl, up, 4, kBeam, Sc(1.f), true, 0.8f);
+        }
+    }
+
+    ImVec2 CloseCenter(ImVec2 a, ImVec2 b) const override { return ImVec2(b.x - Sc(32.f), a.y + Sc(32.f)); }
+    bool   CloseButton(const char* id, ImVec2 c) override {
+        const float r = Sc(13.f);
+        ImGui::SetCursorScreenPos(ImVec2(c.x - r, c.y - r));
+        const bool clicked = ImGui::InvisibleButton(id, ImVec2(r * 2.f, r * 2.f));
+        const bool hovered = ImGui::IsItemHovered();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImU32 col = hovered ? kHot : kStop;
+        const ImVec2 box[4] = { ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y - r), ImVec2(c.x + r, c.y + r),
+                                ImVec2(c.x - r, c.y + r) };
+        dl->AddRectFilled(box[0], box[2], IM_COL32(0, 3, 8, 235));
+        if (hovered) dl->AddRectFilled(box[0], box[2], WithAlpha(col, 0.08f));
+        Beam(dl, box, 4, col, Sc(1.2f), true);
+        const float x = r * 0.5f;
+        const ImVec2 d1[2] = { ImVec2(c.x - x, c.y - x), ImVec2(c.x + x, c.y + x) };
+        const ImVec2 d2[2] = { ImVec2(c.x + x, c.y - x), ImVec2(c.x - x, c.y + x) };
+        Beam(dl, d1, 2, col, Sc(1.4f));
+        Beam(dl, d2, 2, col, Sc(1.4f));
+        return clicked;
+    }
+
+private:
+    static ImVec2 FooterButton() { return ImVec2(Sc(120.f), Sc(34.f)); }
+
+    int score_    = 0;
+    int lastPage_ = -1;
+};
+
+} // namespace vecmon
+
+// ---------------------------------------------------------------------------
+// Arcade Service layout — a coin-op cabinet's hidden test-mode screen.
+//   • Black screen over the monitor-convergence crosshatch, with colour-bar
+//     strips top and bottom, in a chunky pixel font.
+//   • One numbered list, like an operator menu; the hovered item turns
+//     yellow with a blinking arrow, the active choice is marked ON.
+//   • Pages print in line by line; the footer blinks INSERT COIN.
+// ---------------------------------------------------------------------------
+namespace arcade {
+
+constexpr ImU32 kWhite   = IM_COL32(255, 255, 255, 255);
+constexpr ImU32 kYellow  = IM_COL32(255, 255,   0, 255);
+constexpr ImU32 kRed     = IM_COL32(255,  48,  48, 255);
+constexpr ImU32 kCyan    = IM_COL32(  0, 220, 255, 255);
+constexpr ImU32 kGreen   = IM_COL32( 48, 255,  72, 255);
+constexpr ImU32 kBlue    = IM_COL32( 40,  40, 255, 255);
+constexpr ImU32 kMagenta = IM_COL32(255,   0, 255, 255);
+constexpr ImU32 kBlack   = IM_COL32(  0,   0,   0, 255);
+
+ImFont* Font() { return StyleFonts::pressStart ? StyleFonts::pressStart : ImGui::GetFont(); }
+
+float TextW(float size, const char* text) { return Font()->CalcTextSizeA(size, FLT_MAX, 0.f, text).x; }
+
+// Pixel text with a one-pixel darker shadow, the classic arcade drop.
+void PixelText(ImDrawList* dl, float size, ImVec2 pos, ImU32 col, const char* text) {
+    const float o = std::max(1.f, size / 8.f);
+    dl->AddText(Font(), size, ImVec2(pos.x + o, pos.y + o), Shade(col, 0.35f), text);
+    dl->AddText(Font(), size, pos, col, text);
+}
+
+// True for the "on" part of each blink period.
+bool Blink(float t, float period, float duty) { return fmodf(t, period) < period * duty; }
+
+// A pixel arrow pointing right with its tip at `tip`; px is one pixel.
+void Arrow(ImDrawList* dl, ImVec2 tip, float px, ImU32 col) {
+    for (int c = 0; c < 4; ++c) {
+        const float h = (7 - 2 * c) * px * 0.5f;
+        dl->AddRectFilled(ImVec2(tip.x - (4 - c) * px, tip.y - h), ImVec2(tip.x - (3 - c) * px, tip.y + h), col);
+    }
+}
+
+// A strip of the seven test colour bars across a..b.
+void ColourBars(ImDrawList* dl, ImVec2 a, ImVec2 b) {
+    static constexpr ImU32 kBars[7] = { kWhite, kYellow, kCyan, kGreen, kMagenta, kRed, kBlue };
+    const float w = (b.x - a.x) / 7.f;
+    for (int i = 0; i < 7; ++i)
+        dl->AddRectFilled(ImVec2(a.x + i * w, a.y), ImVec2(a.x + (i + 1) * w, b.y), kBars[i]);
+}
+
+std::string Upper(const char* s) {
+    std::string out(s);
+    for (char& ch : out) ch = static_cast<char>(toupper(static_cast<unsigned char>(ch)));
+    return out;
+}
+
+// Text-only button: turns yellow and underlines when hovered.  True when clicked.
+bool TextButton(const char* id, const char* label, ImU32 col) {
+    const float  fs      = Sc(16.f);
+    const ImVec2 pos     = ImGui::GetCursorScreenPos();
+    const ImVec2 size(TextW(fs, label) + Sc(8.f), Sc(22.f));
+    const bool   clicked = ImGui::InvisibleButton(id, size);
+    const bool   hovered = ImGui::IsItemHovered();
+    ImDrawList*  dl      = ImGui::GetWindowDrawList();
+    const ImU32  c       = hovered ? kYellow : col;
+    PixelText(dl, fs, ImVec2(pos.x + Sc(4.f), pos.y + (size.y - fs) * 0.5f), c, label);
+    if (hovered)
+        dl->AddRectFilled(ImVec2(pos.x + Sc(4.f), pos.y + size.y), ImVec2(pos.x + size.x - Sc(4.f), pos.y + size.y + Sc(2.f)), c);
+    return clicked;
+}
+
+// The arcade test-mode look for the shared paged menu.
+class Style : public PagedMenuStyle {
+public:
+    ImVec2  PanelSize()   const override { return ImVec2(680.f, 720.f); }
+    ImVec2  Padding()     const override { return ImVec2(36.f, 24.f); }
+    float   TitleSpace()  const override { return 88.f; }
+    float   FooterSpace() const override { return 84.f; }
+    float   FooterRow()   const override { return 72.f; }
+    int     Columns()     const override { return 1; }
+    float   Gutter()      const override { return 40.f; }   // room for the arrow
+    float   GroupButtonHeight() const override { return 22.f; }
+    float   ItemButtonHeight()  const override { return 22.f; }
+    float   SliderWidth() const override { return 0.5f; }
+    ImFont* Font()        const override { return arcade::Font(); }
+    float   FontSize()    const override { return 16.f; }
+
+    std::string PageTitle(int pageIndex) const override {
+        return pageIndex < 0 ? "SERVICE MODE" : kSectionNames[pageIndex];
+    }
+    std::string GroupLabel(int section) const override {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%02d %s", section + 1, kSectionNames[section]);
+        return buf;
+    }
+
+    // Each page prints in a line at a time.
+    float PageReveal(float t) const override { return std::min(1.f, floorf(t / 0.025f) / 12.f); }
+
+    // Black screen over the convergence crosshatch, colour bars top and bottom.
+    void DrawPanel(ImDrawList* dl, ImVec2 a, ImVec2 b, int, float) override {
+        dl->AddRectFilled(a, b, IM_COL32(0, 0, 0, 248));
+        const float step = Sc(40.f);
+        const float x0 = a.x + fmodf(b.x - a.x, step) * 0.5f, y0 = a.y + fmodf(b.y - a.y, step) * 0.5f;
+        for (float x = x0; x <= b.x; x += step) dl->AddLine(ImVec2(x, a.y), ImVec2(x, b.y), IM_COL32(255, 255, 255, 22));
+        for (float y = y0; y <= b.y; y += step) dl->AddLine(ImVec2(a.x, y), ImVec2(b.x, y), IM_COL32(255, 255, 255, 22));
+        for (float x = x0; x <= b.x; x += step)
+            for (float y = y0; y <= b.y; y += step)
+                dl->AddRectFilled(ImVec2(x - Sc(1.f), y - Sc(1.f)), ImVec2(x + Sc(1.f), y + Sc(1.f)), IM_COL32(255, 255, 255, 90));
+        const float in = Sc(4.f);
+        dl->AddRect(ImVec2(a.x + in, a.y + in), ImVec2(b.x - in, b.y - in), kWhite, 0.f, 0, Sc(2.f));
+        ColourBars(dl, ImVec2(a.x + Sc(10.f), a.y + Sc(10.f)), ImVec2(b.x - Sc(10.f), a.y + Sc(16.f)));
+        ColourBars(dl, ImVec2(a.x + Sc(10.f), b.y - Sc(16.f)), ImVec2(b.x - Sc(10.f), b.y - Sc(10.f)));
+    }
+
+    void DrawTitle(ImDrawList* dl, ImVec2 a, ImVec2 b, const char* title, int, float) override {
+        float       fs   = Sc(24.f);
+        const float maxW = (b.x - a.x) - Sc(140.f);
+        float       w    = TextW(fs, title);
+        if (w > maxW) { fs *= maxW / w; w = maxW; }
+        PixelText(dl, fs, ImVec2(a.x + (b.x - a.x - w) * 0.5f, a.y + Sc(34.f)), kYellow, title);
+        const char* sub = "SEERT CRT OVERLAY";
+        const float ss  = Sc(8.f);
+        PixelText(dl, ss, ImVec2(a.x + (b.x - a.x - TextW(ss, sub)) * 0.5f, a.y + Sc(70.f)), kCyan, sub);
+    }
+
+    bool GroupButton(const char* id, const char* label, ImVec2 size, int index, bool selected, Kind kind) override {
+        const ImVec2 pos     = ImGui::GetCursorScreenPos();
+        const bool   clicked = ImGui::InvisibleButton(id, size);
+        const bool   hovered = ImGui::IsItemHovered();
+        ImDrawList*  dl      = ImGui::GetWindowDrawList();
+        const float  t       = static_cast<float>(ImGui::GetTime());
+
+        std::string text = label;
+        if (kind != Kind::Group) {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%02d ", index + 1);
+            text = buf + Upper(label);
+        }
+        const float fs   = Sc(16.f);
+        const float room = size.x - (selected ? TextW(fs, " ON") : 0.f);
+        while (text.size() > 4 && TextW(fs, text.c_str()) > room) text.pop_back();
+
+        const ImU32 col = selected ? kGreen : hovered ? kYellow : kWhite;
+        const float ty  = pos.y + (size.y - fs) * 0.5f;
+        PixelText(dl, fs, ImVec2(pos.x, ty), col, text.c_str());
+        if (selected) PixelText(dl, fs, ImVec2(pos.x + size.x - TextW(fs, "ON"), ty), kGreen, "ON");
+        if (hovered && Blink(t, 0.5f, 0.65f))
+            Arrow(dl, ImVec2(pos.x - Sc(10.f), pos.y + size.y * 0.5f), Sc(2.f), kYellow);
+        return clicked;
+    }
+
+    bool  BackButton(const char* id) override { return TextButton(id, "< BACK", kWhite); }
+    float QuitWidth() const override { return TextW(Sc(16.f), "QUIT") + Sc(8.f); }
+    bool  QuitButton(const char* id) override { return TextButton(id, "QUIT", kRed); }
+
+    void DrawFooter(ImDrawList* dl, ImVec2 a, ImVec2 b, int, float t) override {
+        const float cx = (a.x + b.x) * 0.5f;
+        if (Blink(t, 1.f, 0.6f)) {
+            const float fs = Sc(16.f);
+            PixelText(dl, fs, ImVec2(cx - TextW(fs, "INSERT COIN") * 0.5f, a.y + Sc(3.f)), kYellow, "INSERT COIN");
+        }
+        const float ss = Sc(8.f);
+        PixelText(dl, ss, ImVec2(cx - TextW(ss, "CREDIT 00") * 0.5f, a.y + Sc(32.f)), kWhite, "CREDIT 00");
+    }
+
+    ImVec2 CloseCenter(ImVec2 a, ImVec2 b) const override { return ImVec2(b.x - Sc(34.f), a.y + Sc(44.f)); }
+    bool   CloseButton(const char* id, ImVec2 c) override {
+        const float r = Sc(13.f);
+        ImGui::SetCursorScreenPos(ImVec2(c.x - r, c.y - r));
+        const bool clicked = ImGui::InvisibleButton(id, ImVec2(r * 2.f, r * 2.f));
+        const bool hovered = ImGui::IsItemHovered();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), hovered ? kYellow : kRed);
+        const float fs = Sc(16.f);
+        dl->AddText(arcade::Font(), fs, ImVec2(c.x - TextW(fs, "X") * 0.5f + Sc(1.f), c.y - fs * 0.5f + Sc(1.f)),
+                    hovered ? kBlack : kWhite, "X");
+        return clicked;
+    }
+};
+
+} // namespace arcade
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -2579,6 +3278,21 @@ SettingsPanel::DrawResult SettingsPanel::Draw(CRTSettings& s,
         case 7: {
             static sorcery::Style sorceryStyle;
             result = DrawPagedMenu(sorceryStyle, "##sorcery", s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices);
+            break;
+        }
+        case 8: {
+            static teletext::Style teletextStyle;
+            result = DrawPagedMenu(teletextStyle, "##teletext", s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices);
+            break;
+        }
+        case 9: {
+            static vecmon::Style vectorStyle;
+            result = DrawPagedMenu(vectorStyle, "##vector", s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices);
+            break;
+        }
+        case 10: {
+            static arcade::Style arcadeStyle;
+            result = DrawPagedMenu(arcadeStyle, "##arcade", s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices);
             break;
         }
         default: result = DrawOSD       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
