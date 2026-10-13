@@ -9,6 +9,7 @@
 #include <string>
 #include <filesystem>
 #include <cstddef>    // offsetof
+#include <algorithm>  // std::max
 #include <Windows.h>
 
 // Bytes of CRTSettings that are actually uploaded to the GPU constant buffer.
@@ -187,6 +188,8 @@ bool D3DRenderer::Init(HWND hwnd, ID3D11Device* device, ID3D11DeviceContext* ctx
         sbd.BindFlags      = D3D11_BIND_CONSTANT_BUFFER;
         sbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
         HR(device->CreateBuffer(&sbd, nullptr, &m_spriteCBuf), "CreateBuffer spriteCBuf");
+        // Blur constant buffer (BlurParams: 4 floats = 16 bytes).
+        HR(device->CreateBuffer(&sbd, nullptr, &m_blurCBuf), "CreateBuffer blurCBuf");
     }
 
     // Alpha blend state for cursor sprite (straight alpha).
@@ -260,6 +263,7 @@ void D3DRenderer::ShutdownStream() {
     m_context->OMSetRenderTargets(0, nullptr, nullptr);
     m_streamRtv.Reset();
     m_streamSwapChain.Reset();
+    m_streamPost = {};
 }
 
 // ---------------------------------------------------------------------------
@@ -317,6 +321,24 @@ bool D3DRenderer::LoadShaders() {
     HR(m_device->CreatePixelShader(
            blitBlob->GetBufferPointer(), blitBlob->GetBufferSize(), nullptr, &m_blitPS),
        "CreatePixelShader (blit)");
+
+    // Pre-pass pixel shaders.
+    const struct { const wchar_t* file; ComPtr<ID3D11PixelShader>* ps; } kPrePasses[] = {
+        { L"composite_ps.cso", &m_compositePS },
+        { L"glow_down_ps.cso", &m_glowDownPS  },
+        { L"halo_down_ps.cso", &m_haloDownPS  },
+        { L"blur_ps.cso",      &m_blurPS      },
+    };
+    for (const auto& p : kPrePasses) {
+        ComPtr<ID3DBlob> blob;
+        if (FAILED(D3DReadFileToBlob((dir / p.file).wstring().c_str(), &blob))) {
+            OutputDebugStringA("D3DRenderer: failed to load a pre-pass .cso\n");
+            return false;
+        }
+        HR(m_device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(),
+                                       nullptr, p.ps->ReleaseAndGetAddressOf()),
+           "CreatePixelShader (pre-pass)");
+    }
 
     return true;
 }
@@ -425,9 +447,10 @@ ID3D11ShaderResourceView* D3DRenderer::GetOrBuildCaptureSRV(ID3D11Texture2D* tex
 // ---------------------------------------------------------------------------
 // RenderFrame — pipeline:
 //   Pass 1  : blit capturedTex → intermediate RT        (format conversion)
-//   Stream  : CRT of streamTex → stream swap chain      (if active)
+//   Stream  : pre-passes + CRT of streamTex → stream swap chain (if active)
 //   UI      : ImGui + sprites → transparent UI RT
-//   Pass 2  : CRT of intermediate, UI composited → back buffer
+//   Pre     : composite signal filter, glow / halation blurs (as enabled)
+//   Pass 2  : CRT of the picture, UI composited → back buffer
 //   Present
 // ---------------------------------------------------------------------------
 void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& settings,
@@ -445,7 +468,7 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
     mainVP.Height   = static_cast<float>(m_height);
     mainVP.MaxDepth = 1.0f;
 
-    // Update constant buffer once — shared by all CRT passes this frame.
+    // Update constant buffer once — shared by all passes this frame.
     UpdateConstantBuffer(settings);
 
     // Common IA / RS state used by all full-screen-quad passes.
@@ -478,50 +501,22 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
             m_context->PSSetShaderResources(0, 1, &nullSrv);
         }
     }
+    m_context->OMSetRenderTargets(0, nullptr, nullptr);
 
     // -----------------------------------------------------------------------
-    // STREAM PASS — CRT of streamTex → stream swap chain (no UI overlay).
-    // Runs before ImGui is composited onto the intermediate so the stream
-    // output is always a clean, UI-free CRT image.
+    // STREAM — CRT of streamTex → stream swap chain.  No UI layer, so the
+    // stream output is always a clean, UI-free CRT image.  It gets its own
+    // pre-pass chain, sized to the stream source.
     // -----------------------------------------------------------------------
     if (m_streamSwapChain && m_streamRtv && streamTex) {
         if (ID3D11ShaderResourceView* streamSRV = GetOrBuildCaptureSRV(streamTex)) {
-            // Unbind intermediate RTV — it will become SRV... actually here we
-            // read streamTex (not the intermediate), so no conflict. But we do
-            // need to switch the active RTV to the stream back buffer.
-            m_context->OMSetRenderTargets(0, nullptr, nullptr);
+            D3D11_TEXTURE2D_DESC sd = {};
+            streamTex->GetDesc(&sd);
+            const PostResult post = RunPostChain(m_streamPost, streamSRV,
+                static_cast<int>(sd.Width), static_cast<int>(sd.Height), settings);
 
             m_context->ClearRenderTargetView(m_streamRtv.Get(), black);
-            {
-                ID3D11RenderTargetView* rtv = m_streamRtv.Get();
-                m_context->OMSetRenderTargets(1, &rtv, nullptr);
-            }
-
-            D3D11_VIEWPORT streamVP = {};
-            streamVP.Width    = static_cast<float>(m_streamWidth);
-            streamVP.Height   = static_cast<float>(m_streamHeight);
-            streamVP.MaxDepth = 1.0f;
-            m_context->RSSetViewports(1, &streamVP);
-
-            m_context->VSSetShader(m_vs.Get(), nullptr, 0);
-            m_context->PSSetShader(m_ps.Get(), nullptr, 0);
-
-            ID3D11Buffer* cb = m_cbuffer.Get();
-            m_context->PSSetConstantBuffers(0, 1, &cb);
-
-            ID3D11SamplerState* samp = m_sampler.Get();
-            m_context->PSSetSamplers(0, 1, &samp);
-
-            // t1 (UI layer) left unbound — reads as zero, so no UI on the stream.
-            ID3D11ShaderResourceView* srvs[2] = { streamSRV, nullptr };
-            m_context->PSSetShaderResources(0, 2, srvs);
-
-            m_context->Draw(3, 0);
-
-            ID3D11ShaderResourceView* nullSrv = nullptr;
-            m_context->PSSetShaderResources(0, 1, &nullSrv);
-            m_context->OMSetRenderTargets(0, nullptr, nullptr);
-
+            CRTPass(m_streamRtv.Get(), m_streamWidth, m_streamHeight, post, nullptr);
             m_streamSwapChain->Present(0, 0); // no vsync — driven by main Present
         }
     }
@@ -547,39 +542,197 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
     for (int i = 0; i < spriteCount; ++i)
         DrawSprite(sprites[i]);
 
-    // Unbind so the intermediate and UI RTs can be read as SRVs in pass 2.
+    // Unbind so the UI RT can be read as an SRV.
     m_context->OMSetRenderTargets(0, nullptr, nullptr);
 
     // -----------------------------------------------------------------------
-    // PASS 2 — CRT shader on intermediate RT → main back buffer → Present.
+    // PRE-PASSES + PASS 2 — CRT of the picture → main back buffer → Present.
     // -----------------------------------------------------------------------
+    const PostResult post = RunPostChain(m_mainPost, m_intermediateSRV.Get(),
+                                         m_width, m_height, settings);
     m_context->ClearRenderTargetView(m_rtv.Get(), black);
-    {
-        ID3D11RenderTargetView* rtv = m_rtv.Get();
-        m_context->OMSetRenderTargets(1, &rtv, nullptr);
-    }
-    m_context->RSSetViewports(1, &mainVP);
+    CRTPass(m_rtv.Get(), m_width, m_height, post, m_uiSRV.Get());
 
+    m_swapChain->Present(1, 0); // vsync on main
+}
+
+// ---------------------------------------------------------------------------
+// CRTPass — the main CRT shader into rtv, reading the picture (t0), the UI
+// layer (t1, may be null) and the glow / halation results (t2, t3).
+// ---------------------------------------------------------------------------
+void D3DRenderer::CRTPass(ID3D11RenderTargetView* rtv, int w, int h,
+                          const PostResult& post, ID3D11ShaderResourceView* ui) {
+    D3D11_VIEWPORT vp = {};
+    vp.Width    = static_cast<float>(w);
+    vp.Height   = static_cast<float>(h);
+    vp.MaxDepth = 1.0f;
+
+    m_context->OMSetRenderTargets(1, &rtv, nullptr);
+    m_context->RSSetViewports(1, &vp);
     m_context->VSSetShader(m_vs.Get(), nullptr, 0);
     m_context->PSSetShader(m_ps.Get(), nullptr, 0);
 
     ID3D11Buffer* cb = m_cbuffer.Get();
     m_context->PSSetConstantBuffers(0, 1, &cb);
-
     ID3D11SamplerState* samp = m_sampler.Get();
     m_context->PSSetSamplers(0, 1, &samp);
 
-    ID3D11ShaderResourceView* srvs[2] = { m_intermediateSRV.Get(), m_uiSRV.Get() };
-    m_context->PSSetShaderResources(0, 2, srvs);
-
+    ID3D11ShaderResourceView* srvs[4] = { post.picture, ui, post.glow, post.halo };
+    m_context->PSSetShaderResources(0, 4, srvs);
     m_context->Draw(3, 0);
 
-    {
-        ID3D11ShaderResourceView* nullSrvs[2] = { nullptr, nullptr };
-        m_context->PSSetShaderResources(0, 2, nullSrvs);
+    ID3D11ShaderResourceView* nullSrvs[4] = {};
+    m_context->PSSetShaderResources(0, 4, nullSrvs);
+    m_context->OMSetRenderTargets(0, nullptr, nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// CreateRenderTarget — texture + RTV + SRV of the given size and format.
+// ---------------------------------------------------------------------------
+bool D3DRenderer::CreateRenderTarget(RenderTarget& rt, int w, int h, DXGI_FORMAT format) {
+    rt = {};
+    D3D11_TEXTURE2D_DESC td = {};
+    td.Width      = static_cast<UINT>(std::max(w, 1));
+    td.Height     = static_cast<UINT>(std::max(h, 1));
+    td.MipLevels  = 1;
+    td.ArraySize  = 1;
+    td.Format     = format;
+    td.SampleDesc = { 1, 0 };
+    td.Usage      = D3D11_USAGE_DEFAULT;
+    td.BindFlags  = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+
+    if (FAILED(m_device->CreateTexture2D(&td, nullptr, &rt.tex)) ||
+        FAILED(m_device->CreateRenderTargetView(rt.tex.Get(), nullptr, &rt.rtv)) ||
+        FAILED(m_device->CreateShaderResourceView(rt.tex.Get(), nullptr, &rt.srv))) {
+        rt = {};
+        return false;
+    }
+    rt.w = static_cast<int>(td.Width);
+    rt.h = static_cast<int>(td.Height);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// EnsurePostChain — (re)creates a chain's targets when the source size changes.
+// Glow and halation are stored as half-float linear light so bright values
+// and the blur's soft tails don't band.
+// ---------------------------------------------------------------------------
+bool D3DRenderer::EnsurePostChain(PostChain& chain, int w, int h) {
+    if (chain.srcW == w && chain.srcH == h && chain.signal.rtv) return true;
+    chain = {};
+
+    constexpr DXGI_FORMAT kLinear = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    const bool ok =
+        CreateRenderTarget(chain.signal,  w, h, DXGI_FORMAT_R8G8B8A8_UNORM) &&
+        CreateRenderTarget(chain.glow[0], (w + 3) / 4, (h + 3) / 4, kLinear) &&
+        CreateRenderTarget(chain.glow[1], (w + 3) / 4, (h + 3) / 4, kLinear) &&
+        CreateRenderTarget(chain.halo[0], (w + 7) / 8, (h + 7) / 8, kLinear) &&
+        CreateRenderTarget(chain.halo[1], (w + 7) / 8, (h + 7) / 8, kLinear);
+    if (!ok) {
+        OutputDebugStringA("D3DRenderer: post chain creation failed\n");
+        chain = {};
+        return false;
+    }
+    chain.srcW = w;
+    chain.srcH = h;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// FullscreenPass — runs ps over all of dst, reading source as t0.
+// ---------------------------------------------------------------------------
+void D3DRenderer::FullscreenPass(ID3D11PixelShader* ps, const RenderTarget& dst,
+                                 ID3D11ShaderResourceView* source) {
+    D3D11_VIEWPORT vp = {};
+    vp.Width    = static_cast<float>(dst.w);
+    vp.Height   = static_cast<float>(dst.h);
+    vp.MaxDepth = 1.0f;
+
+    ID3D11RenderTargetView* rtv = dst.rtv.Get();
+    m_context->OMSetRenderTargets(1, &rtv, nullptr);
+    m_context->RSSetViewports(1, &vp);
+    m_context->PSSetShader(ps, nullptr, 0);
+    m_context->PSSetShaderResources(0, 1, &source);
+    m_context->Draw(3, 0);
+
+    ID3D11ShaderResourceView* nullSrv = nullptr;
+    m_context->PSSetShaderResources(0, 1, &nullSrv);
+    m_context->OMSetRenderTargets(0, nullptr, nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// BlurPass — one direction of a separable Gaussian, sigma in src texels.
+// PS_Blur takes 13 taps; they are spread to cover ±3 sigma, never closer
+// than one texel apart.
+// ---------------------------------------------------------------------------
+void D3DRenderer::BlurPass(const RenderTarget& src, const RenderTarget& dst,
+                           bool horizontal, float sigmaTexels) {
+    const float sigma   = std::max(sigmaTexels, 0.5f);
+    const float spacing = std::max(sigma * 0.5f, 1.0f);   // texels between taps
+    struct { float stepX, stepY, sigmaTaps, pad; } params = {
+        horizontal ? spacing / src.w : 0.f,
+        horizontal ? 0.f : spacing / src.h,
+        sigma / spacing,
+        0.f,
+    };
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    if (SUCCEEDED(m_context->Map(m_blurCBuf.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        memcpy(mapped.pData, &params, sizeof(params));
+        m_context->Unmap(m_blurCBuf.Get(), 0);
+    }
+    ID3D11Buffer* cb = m_blurCBuf.Get();
+    m_context->PSSetConstantBuffers(2, 1, &cb);
+    FullscreenPass(m_blurPS.Get(), dst, src.srv.Get());
+}
+
+// ---------------------------------------------------------------------------
+// RunPostChain — runs the enabled pre-passes on source (w × h) and returns
+// what the CRT pass should bind.  Disabled stages cost nothing.
+// ---------------------------------------------------------------------------
+D3DRenderer::PostResult D3DRenderer::RunPostChain(PostChain& chain,
+        ID3D11ShaderResourceView* source, int w, int h, const CRTSettings& s) {
+    PostResult r;
+    r.picture = source;
+
+    const bool composite = s.chromaBleed > 0.001f || s.signalSoftness > 0.001f;
+    const bool glow      = s.glowStrength > 0.001f;
+    const bool halo      = s.diffuseStrength > 0.001f;
+    if (!composite && !glow && !halo) return r;
+    if (!EnsurePostChain(chain, w, h)) return r;
+
+    m_context->VSSetShader(m_vs.Get(), nullptr, 0);
+    ID3D11Buffer* cb = m_cbuffer.Get();
+    m_context->PSSetConstantBuffers(0, 1, &cb);
+    ID3D11SamplerState* samp = m_sampler.Get();
+    m_context->PSSetSamplers(0, 1, &samp);
+
+    if (composite) {
+        FullscreenPass(m_compositePS.Get(), chain.signal, source);
+        r.picture = chain.signal.srv.Get();
     }
 
-    m_swapChain->Present(1, 0); // vsync on main
+    if (glow || halo) {
+        // Radii are set in pixels at 1080p; scale to this picture's height.
+        const float pxScale = static_cast<float>(h) / 1080.f;
+
+        FullscreenPass(m_glowDownPS.Get(), chain.glow[0], r.picture);
+
+        // Halation starts from the unblurred 1/4-size source.
+        if (halo) {
+            FullscreenPass(m_haloDownPS.Get(), chain.halo[0], chain.glow[0].srv.Get());
+            const float sigma = s.halationRadius * pxScale / 8.f;
+            BlurPass(chain.halo[0], chain.halo[1], true,  sigma);
+            BlurPass(chain.halo[1], chain.halo[0], false, sigma);
+            r.halo = chain.halo[0].srv.Get();
+        }
+        if (glow) {
+            const float sigma = s.glowRadius * pxScale / 4.f;
+            BlurPass(chain.glow[0], chain.glow[1], true,  sigma);
+            BlurPass(chain.glow[1], chain.glow[0], false, sigma);
+            r.glow = chain.glow[0].srv.Get();
+        }
+    }
+    return r;
 }
 
 // ---------------------------------------------------------------------------

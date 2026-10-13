@@ -28,7 +28,7 @@ static constexpr int kStyleCount = 6;
 
 static const char* kSectionNames[] = {
     "CAPTURE SOURCE", "PRESETS", "GEOMETRY", "SCANLINES",
-    "GLOW", "DIFFUSION", "VIGNETTE", "FLICKER", "STATIC",
+    "GLOW", "HALATION", "VIGNETTE", "FLICKER", "STATIC",
     "SHADOW MASK", "COLOUR", "CURSOR", "STREAMING"
 };
 static constexpr int kSectionCount = 13;
@@ -361,6 +361,28 @@ static void DrawMaskCompensation(CRTSettings& s) {
         "1 keeps average brightness; 0 lets the mask darken the picture.");
 }
 
+// GLOW — after Strength.
+static void DrawGlowRadius(CRTSettings& s) {
+    ImGui::SliderFloat("Radius##g", &s.glowRadius, 1.0f, 30.0f, "%.0f px");
+    Tip("How far the glow spreads around bright areas (in pixels at 1080p; scales with resolution).");
+}
+
+// HALATION — after Threshold.
+static void DrawHalationRadius(CRTSettings& s) {
+    ImGui::SliderFloat("Radius##d", &s.halationRadius, 10.0f, 150.0f, "%.0f px");
+    Tip("How far halation spreads — light scattering inside the tube glass, so it is wide and soft\n"
+        "(in pixels at 1080p; scales with resolution).");
+}
+
+// COLOUR — after the gamma controls.
+static void DrawSignalControls(CRTSettings& s) {
+    ImGui::SliderFloat("Colour Bleed", &s.chromaBleed,    0.0f, 1.0f, "%.2f");
+    Tip("Composite-video colour smear.  NTSC carries colour with far less detail than\n"
+        "brightness, so colours bleed sideways while edges stay readable.");
+    ImGui::SliderFloat("Softness",     &s.signalSoftness, 0.0f, 1.0f, "%.2f");
+    Tip("Horizontal softness of the whole signal, like a limited-bandwidth analogue input.");
+}
+
 // COLOUR — after Saturation.
 static void DrawGammaControls(CRTSettings& s) {
     ImGui::SliderFloat("CRT Gamma",     &s.crtGamma,     1.8f, 3.0f, "%.2f");
@@ -487,13 +509,15 @@ static void DrawSettingsBody(
 
     Sec("GLOW");
     ImGui::SliderFloat("Strength##g",   &s.glowStrength,      0.0f,  2.0f,   "%.2f");
-    Tip("Phosphor bloom — bright edges bleed into adjacent pixels, mimicking CRT phosphor halation.");
+    Tip("Phosphor glow — bright areas bleed softly into their surroundings.");
+    DrawGlowRadius(s);
 
-    Sec("DIFFUSION");
+    Sec("HALATION");
     ImGui::SliderFloat("Strength##d",   &s.diffuseStrength,   0.0f,  2.0f,   "%.2f");
-    Tip("Brightness-weighted bloom — only pixels above the threshold radiate light outward.");
+    Tip("Wide, soft glow from light scattering in the tube glass — only areas brighter than the threshold.");
     ImGui::SliderFloat("Threshold##d",  &s.diffuseThreshold,  0.0f,  1.0f,   "%.2f");
-    Tip("Luminance cutoff — pixels dimmer than this value do not contribute to the diffusion glow.");
+    Tip("Brightness cutoff — areas dimmer than this do not cause halation.");
+    DrawHalationRadius(s);
 
     Sec("VIGNETTE");
     ImGui::SliderFloat("Strength##v",   &s.vignetteStrength,  0.0f,  1.0f,   "%.2f");
@@ -535,6 +559,7 @@ static void DrawSettingsBody(
     ImGui::SliderFloat("Saturation",   &s.saturation,       0.0f,  2.0f,   "%.2f");
     Tip("Colour saturation — 0 is greyscale, 1.0 is original, 2.0 is double-saturated.");
     DrawGammaControls(s);
+    DrawSignalControls(s);
     {
         float col[3] = { s.phosphorR, s.phosphorG, s.phosphorB };
         if (ImGui::ColorEdit3("Phosphor##ph", col,
@@ -717,13 +742,15 @@ static void DrawSectionContent(
         break;
     case 4:
         ImGui::SliderFloat("Strength##g", &s.glowStrength, 0.0f, 2.0f, "%.2f");
-        Tip("Phosphor bloom strength.");
+        Tip("Phosphor glow strength.");
+        DrawGlowRadius(s);
         break;
     case 5:
         ImGui::SliderFloat("Strength##d",  &s.diffuseStrength,  0.0f, 2.0f, "%.2f");
-        Tip("Brightness-weighted bloom strength.");
+        Tip("Halation strength — wide glow around bright areas.");
         ImGui::SliderFloat("Threshold##d", &s.diffuseThreshold, 0.0f, 1.0f, "%.2f");
-        Tip("Luminance cutoff — pixels below this don't glow.");
+        Tip("Brightness cutoff for halation.");
+        DrawHalationRadius(s);
         break;
     case 6:
         ImGui::SliderFloat("Strength##v", &s.vignetteStrength, 0.0f, 1.0f, "%.2f");
@@ -763,6 +790,7 @@ static void DrawSectionContent(
         ImGui::SliderFloat("Saturation", &s.saturation, 0.0f, 2.0f, "%.2f");
         Tip("Colour saturation.");
         DrawGammaControls(s);
+        DrawSignalControls(s);
         float col[3] = { s.phosphorR, s.phosphorG, s.phosphorB };
         if (ImGui::ColorEdit3("Phosphor##ph", col,
                 ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_PickerHueBar)) {
@@ -1343,13 +1371,15 @@ static SettingsPanel::DrawResult DrawDefault(CRTSettings& s,
     }
     if (ImGui::CollapsingHeader("Glow", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SliderFloat("Strength##g",  &s.glowStrength,     0.0f, 2.0f, "%.2f");
-        Tip("Phosphor bloom — bright edges bleed into adjacent pixels, mimicking CRT phosphor halation.");
+        Tip("Phosphor glow — bright areas bleed softly into their surroundings.");
+        DrawGlowRadius(s);
     }
-    if (ImGui::CollapsingHeader("Diffusion", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader("Halation", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SliderFloat("Strength##d",  &s.diffuseStrength,  0.0f, 2.0f, "%.2f");
-        Tip("Brightness-weighted bloom — only pixels above the threshold radiate light outward, creating a glowing look.");
+        Tip("Wide, soft glow from light scattering in the tube glass — only areas brighter than the threshold.");
         ImGui::SliderFloat("Threshold##d", &s.diffuseThreshold, 0.0f, 1.0f, "%.2f");
-        Tip("Luminance cutoff — pixels dimmer than this value do not contribute to the diffusion glow.");
+        Tip("Brightness cutoff — areas dimmer than this do not cause halation.");
+        DrawHalationRadius(s);
     }
     if (ImGui::CollapsingHeader("Vignette", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SliderFloat("Strength##v", &s.vignetteStrength, 0.0f, 1.0f, "%.2f");
@@ -1389,6 +1419,7 @@ static SettingsPanel::DrawResult DrawDefault(CRTSettings& s,
         ImGui::SliderFloat("Saturation",  &s.saturation, 0.0f, 2.0f, "%.2f");
         Tip("Colour saturation — 0 is greyscale, 1.0 is original, 2.0 is double-saturated.");
         DrawGammaControls(s);
+        DrawSignalControls(s);
         {
             float col[3] = { s.phosphorR, s.phosphorG, s.phosphorB };
             if (ImGui::ColorEdit3("Phosphor##ph", col,

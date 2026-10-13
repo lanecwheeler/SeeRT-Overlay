@@ -78,9 +78,42 @@ public:
     HANDLE GetFrameLatencyHandle() const { return m_frameLatencyHandle; }
 
 private:
+    struct RenderTarget {
+        ComPtr<ID3D11Texture2D>          tex;
+        ComPtr<ID3D11RenderTargetView>   rtv;
+        ComPtr<ID3D11ShaderResourceView> srv;
+        int w = 0, h = 0;
+    };
+
+    // Pre-passes run on a picture before the CRT pass: composite signal
+    // filtering, and the glow / halation blur pyramids.  One chain per
+    // picture source (overlay and stream), sized to that source.
+    struct PostChain {
+        RenderTarget signal;   // composite-filtered picture, full size (signal space)
+        RenderTarget glow[2];  // 1/4 size, linear light — [0] holds the result
+        RenderTarget halo[2];  // 1/8 size, linear light — [0] holds the result
+        int srcW = 0, srcH = 0;
+    };
+    // SRVs the CRT pass binds to t0, t2 and t3 (glow / halo null when off).
+    struct PostResult {
+        ID3D11ShaderResourceView* picture = nullptr;
+        ID3D11ShaderResourceView* glow    = nullptr;
+        ID3D11ShaderResourceView* halo    = nullptr;
+    };
+
     bool LoadShaders();
     bool CreateBackBufferRTV();
     bool CreateIntermediateRT();
+    bool CreateRenderTarget(RenderTarget& rt, int w, int h, DXGI_FORMAT format);
+    bool EnsurePostChain(PostChain& chain, int w, int h);
+    PostResult RunPostChain(PostChain& chain, ID3D11ShaderResourceView* source,
+                            int w, int h, const CRTSettings& settings);
+    void FullscreenPass(ID3D11PixelShader* ps, const RenderTarget& dst,
+                        ID3D11ShaderResourceView* source);
+    void BlurPass(const RenderTarget& src, const RenderTarget& dst,
+                  bool horizontal, float sigmaTexels);
+    void CRTPass(ID3D11RenderTargetView* rtv, int w, int h, const PostResult& post,
+                 ID3D11ShaderResourceView* ui);
     void UpdateConstantBuffer(const CRTSettings& settings);
     void DrawSprite(const Sprite& sprite);
 
@@ -122,9 +155,17 @@ private:
     ComPtr<ID3D11VertexShader>         m_spriteVS; // positioned quad for cursor
     ComPtr<ID3D11PixelShader>          m_ps;       // CRT effects PS
     ComPtr<ID3D11PixelShader>          m_blitPS;   // pass-through PS
+    ComPtr<ID3D11PixelShader>          m_compositePS; // composite signal filter
+    ComPtr<ID3D11PixelShader>          m_glowDownPS;  // linearise + 1/4 downsample
+    ComPtr<ID3D11PixelShader>          m_haloDownPS;  // threshold + 1/8 downsample
+    ComPtr<ID3D11PixelShader>          m_blurPS;      // separable Gaussian blur
+
+    PostChain                          m_mainPost;   // overlay picture
+    PostChain                          m_streamPost; // stream picture
 
     ComPtr<ID3D11Buffer>               m_cbuffer;
     ComPtr<ID3D11Buffer>               m_spriteCBuf; // SpriteParams b1
+    ComPtr<ID3D11Buffer>               m_blurCBuf;   // BlurParams b2
     ComPtr<ID3D11SamplerState>         m_sampler;
     ComPtr<ID3D11RasterizerState>      m_rsState;
     ComPtr<ID3D11BlendState>           m_alphaBlendState;

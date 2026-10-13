@@ -157,68 +157,48 @@ endif()
 
 message(STATUS "fxc.exe: ${FXC_PATH}")
 
-set(SHADER_SRC      "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/crt.hlsl")
-set(VS_CSO          "${CMAKE_CURRENT_BINARY_DIR}/crt_vs.cso")
-set(PS_CSO          "${CMAKE_CURRENT_BINARY_DIR}/crt_ps.cso")
-set(BLIT_PS_CSO     "${CMAKE_CURRENT_BINARY_DIR}/crt_blit_ps.cso")
-set(SPRITE_VS_CSO   "${CMAKE_CURRENT_BINARY_DIR}/sprite_vs.cso")
+set(SHADER_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders/crt.hlsl")
 
-# Vertex shader
-add_custom_command(
-    OUTPUT  "${VS_CSO}"
-    COMMAND "${FXC_PATH}"
-            /nologo /T vs_5_0 /E VS_Main
-            /Fo "${VS_CSO}" "${SHADER_SRC}"
-    DEPENDS "${SHADER_SRC}"
-    COMMENT "fxc: compiling CRT vertex shader"
+# Each entry: <output name>|<profile>|<entry point>.  All come from crt.hlsl.
+set(SHADER_ENTRIES
+    "crt_vs|vs_5_0|VS_Main"               # full-screen triangle
+    "sprite_vs|vs_5_0|VS_Sprite"          # positioned quad (cursor sprites)
+    "crt_ps|ps_5_0|PS_Main"               # CRT effect
+    "crt_blit_ps|ps_5_0|PS_Blit"          # pass-through copy
+    "composite_ps|ps_5_0|PS_Composite"    # composite signal bandwidth limits
+    "glow_down_ps|ps_5_0|PS_GlowDown"     # linearise + 1/4 downsample
+    "halo_down_ps|ps_5_0|PS_HaloDown"     # threshold + 1/8 downsample
+    "blur_ps|ps_5_0|PS_Blur"              # separable Gaussian blur
 )
 
-# CRT pixel shader
-add_custom_command(
-    OUTPUT  "${PS_CSO}"
-    COMMAND "${FXC_PATH}"
-            /nologo /T ps_5_0 /E PS_Main
-            /Fo "${PS_CSO}" "${SHADER_SRC}"
-    DEPENDS "${SHADER_SRC}"
-    COMMENT "fxc: compiling CRT pixel shader"
-)
+set(SHADER_OUTPUTS)
+set(SHADER_COPY_COMMANDS)
+foreach(entry IN LISTS SHADER_ENTRIES)
+    string(REPLACE "|" ";" parts "${entry}")
+    list(GET parts 0 name)
+    list(GET parts 1 profile)
+    list(GET parts 2 entry_point)
+    set(cso "${CMAKE_CURRENT_BINARY_DIR}/${name}.cso")
 
-# Blit (pass-through) pixel shader
-add_custom_command(
-    OUTPUT  "${BLIT_PS_CSO}"
-    COMMAND "${FXC_PATH}"
-            /nologo /T ps_5_0 /E PS_Blit
-            /Fo "${BLIT_PS_CSO}" "${SHADER_SRC}"
-    DEPENDS "${SHADER_SRC}"
-    COMMENT "fxc: compiling blit pixel shader"
-)
-
-# Sprite vertex shader (positions a textured quad; used for cursor on secondary overlays)
-add_custom_command(
-    OUTPUT  "${SPRITE_VS_CSO}"
-    COMMAND "${FXC_PATH}"
-            /nologo /T vs_5_0 /E VS_Sprite
-            /Fo "${SPRITE_VS_CSO}" "${SHADER_SRC}"
-    DEPENDS "${SHADER_SRC}"
-    COMMENT "fxc: compiling sprite vertex shader"
-)
+    add_custom_command(
+        OUTPUT  "${cso}"
+        COMMAND "${FXC_PATH}" /nologo /T ${profile} /E ${entry_point} /Fo "${cso}" "${SHADER_SRC}"
+        DEPENDS "${SHADER_SRC}"
+        COMMENT "fxc: compiling ${entry_point} (${name}.cso)"
+    )
+    list(APPEND SHADER_OUTPUTS "${cso}")
+    list(APPEND SHADER_COPY_COMMANDS
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${cso}" "$<TARGET_FILE_DIR:SeeRTOverlay>/${name}.cso")
+endforeach()
 
 # Custom target that the main executable depends on.
-add_custom_target(SeeRTOverlay_Shaders ALL
-    DEPENDS "${VS_CSO}" "${PS_CSO}" "${BLIT_PS_CSO}" "${SPRITE_VS_CSO}"
-)
+add_custom_target(SeeRTOverlay_Shaders ALL DEPENDS ${SHADER_OUTPUTS})
 add_dependencies(SeeRTOverlay SeeRTOverlay_Shaders)
 
 # Copy compiled shaders next to the executable after build.
 add_custom_command(TARGET SeeRTOverlay POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${VS_CSO}"        "$<TARGET_FILE_DIR:SeeRTOverlay>/crt_vs.cso"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${PS_CSO}"        "$<TARGET_FILE_DIR:SeeRTOverlay>/crt_ps.cso"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${BLIT_PS_CSO}"   "$<TARGET_FILE_DIR:SeeRTOverlay>/crt_blit_ps.cso"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${SPRITE_VS_CSO}" "$<TARGET_FILE_DIR:SeeRTOverlay>/sprite_vs.cso"
+    ${SHADER_COPY_COMMANDS}
     COMMENT "Copying shader .cso files to output directory"
 )
 

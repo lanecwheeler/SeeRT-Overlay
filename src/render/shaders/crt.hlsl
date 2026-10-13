@@ -15,10 +15,16 @@
 //     (crt-guest-advanced) and the 2-pixel magenta/green mask.
 //   • Rounded, anti-aliased tube corners (crt-geom cornersize).
 //   • Convergence error that grows toward the screen edges (guest dctype).
+//   • Glow and halation from separable Gaussian blurs of a downsampled,
+//     linearised picture (crt-guest-advanced's glow / bloom passes).
+//   • Composite colour bleed: per-component YIQ bandwidth limits (GTU).
+//
+// Entry points: VS_Main, VS_Sprite, PS_Main (CRT), PS_Blit, and the
+// pre-passes PS_Composite, PS_GlowDown, PS_HaloDown, PS_Blur.
 
 // ---------------------------------------------------------------------------
 // Constant buffer — must match the CRTSettings C++ struct exactly.
-// 36 floats = 144 bytes (9 × 16).
+// 40 floats = 160 bytes (10 × 16).
 // ---------------------------------------------------------------------------
 cbuffer CRTParams : register(b0) {
     float curvatureX;       // 0–0.5
@@ -64,21 +70,42 @@ cbuffer CRTParams : register(b0) {
     float lineResolve;        // 0–1  per-line colour resolve
     float maskCompensation;   // 0–1  lit-phosphor brightness compensation
     float cornerRadius;       // 0–0.25 rounded corners, fraction of picture height
+    float chromaBleed;        // 0–1  composite chroma bandwidth limit
+
+    float signalSoftness;     // 0–1  luma bandwidth limit
+    float glowRadius;         // 1–30   px at 1080p (used on the CPU to size the blur)
+    float halationRadius;     // 10–150 px at 1080p (used on the CPU to size the blur)
     float shaderPad0;
 };
 
 // ---------------------------------------------------------------------------
 // Textures + sampler
-//   t0 — the captured picture (gamma-encoded)
+//   t0 — the picture (gamma-encoded): the capture, or the composite-filtered
+//        signal.  Also the input of the pre-passes below.
 //   t1 — settings UI + cursor, premultiplied alpha (gamma-encoded).  Kept
 //        separate so per-line resolve never smears the menu text.  Unbound
 //        (reads as zero) for the stream output.
+//   t2 — glow: linear light, 1/4 size, Gaussian-blurred.   Zero when off.
+//   t3 — halation: linear light above the threshold, 1/8 size, wide blur.
 // ---------------------------------------------------------------------------
 Texture2D    gCaptureTexture : register(t0);
 Texture2D    gUITexture      : register(t1);
+Texture2D    gGlowTexture    : register(t2);
+Texture2D    gHaloTexture    : register(t3);
 SamplerState gLinearClamp    : register(s0);
 
+// Per-pass parameters for PS_Blur.
+cbuffer BlurParams : register(b2) {
+    float2 blurStep;   // UV offset between taps, along the blur direction
+    float  blurSigma;  // Gaussian sigma, measured in taps
+    float  blurPad;
+};
+
 static const float3 kLuma = float3(0.2126, 0.7152, 0.0722);
+
+// Scale of the glow / halation light added at full slider strength.
+static const float kGlowGain = 0.25;
+static const float kHaloGain = 0.6;
 
 // ---------------------------------------------------------------------------
 // Vertex shader — SV_VertexID full-screen triangle, no vertex buffer needed.
@@ -241,29 +268,103 @@ float Vignette(float2 uv) {
     return 1.0 - dot(d, d) * vignetteStrength * 4.0;
 }
 
+// ===========================================================================
+// Pre-passes — run before the CRT pass, each reading t0.
+// ===========================================================================
+
 // ---------------------------------------------------------------------------
-// Bloom — 8-tap ring phosphor halation, accumulated in linear space.
-// Radius is the same number of pixels horizontally and vertically.
-// Returns ungraded linear light.
+// Composite signal (after GTU): convert to YIQ, then low-pass each component
+// horizontally with its own bandwidth — luma lightly, chroma heavily (NTSC
+// gives I and Q far less bandwidth than Y).  Colours smear sideways while
+// detail stays readable.  Bandwidths are in samples per picture width, at
+// full strength: Y 256, I 83, Q 25 (GTU's defaults).  Operates in signal
+// (gamma) space, as the real signal does.
 // ---------------------------------------------------------------------------
-float3 Bloom(float2 uv) {
-    if (glowStrength < 0.001) return float3(0, 0, 0);
+static const float3x3 kRGBtoYIQ = {
+    0.299,     0.587,     0.114,
+    0.595716, -0.274453, -0.321263,
+    0.211456, -0.522591,  0.311135,
+};
+static const float3x3 kYIQtoRGB = {
+    1.0,  0.9563,  0.6210,
+    1.0, -0.2721, -0.6474,
+    1.0, -1.1070,  1.7046,
+};
 
-    float2 sz  = TexSize();
-    float2 r   = float2(sz.y / sz.x, 1.0) * (0.004 * glowStrength);
-    float2 d   = r * 0.707;
-    float3 acc = float3(0, 0, 0);
+// Horizontal Gaussian of the YIQ signal with the given sigma (pixels).
+// Nine taps spaced at sigma/2 cover ±2 sigma.
+float3 FilterYIQ(float2 uv, float sigmaPx, float texelX) {
+    float3 yiq;
+    if (sigmaPx < 0.5) {
+        yiq = mul(kRGBtoYIQ, gCaptureTexture.Sample(gLinearClamp, uv).rgb);
+    } else {
+        float  spacing = sigmaPx * 0.5;
+        float3 acc     = float3(0, 0, 0);
+        float  wsum    = 0.0;
+        [unroll]
+        for (int i = -4; i <= 4; i++) {
+            float w  = exp(-0.5 * (i * spacing) * (i * spacing) / (sigmaPx * sigmaPx));
+            float3 c = gCaptureTexture.Sample(gLinearClamp, uv + float2(i * spacing * texelX, 0)).rgb;
+            acc  += mul(kRGBtoYIQ, c) * w;
+            wsum += w;
+        }
+        yiq = acc / wsum;
+    }
+    return yiq;
+}
 
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2( r.x, 0)).rgb);
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2(-r.x, 0)).rgb);
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2(0,  r.y)).rgb);
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2(0, -r.y)).rgb);
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2( d.x,  d.y)).rgb);
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2(-d.x,  d.y)).rgb);
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2( d.x, -d.y)).rgb);
-    acc += ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + float2(-d.x, -d.y)).rgb);
+float4 PS_Composite(VS_Output input) : SV_TARGET {
+    float width = TexSize().x;
+    // Gaussian sigma ≈ half the width of one signal sample.
+    float sigY = signalSoftness * 0.5 * width / 256.0;
+    float sigI = chromaBleed    * 0.5 * width / 83.0;
+    float sigQ = chromaBleed    * 0.5 * width / 25.0;
 
-    return (acc / 8.0) * glowStrength * 0.25;
+    float3 yiq;
+    yiq.x = FilterYIQ(input.uv, sigY, 1.0 / width).x;
+    yiq.y = FilterYIQ(input.uv, sigI, 1.0 / width).y;
+    yiq.z = FilterYIQ(input.uv, sigQ, 1.0 / width).z;
+    return float4(saturate(mul(kYIQtoRGB, yiq)), 1.0);
+}
+
+// ---------------------------------------------------------------------------
+// Glow source: decode to linear light and box-filter to 1/4 size.  Four
+// bilinear taps one source texel off-centre average a 4×4 block.
+// ---------------------------------------------------------------------------
+float4 PS_GlowDown(VS_Output input) : SV_TARGET {
+    float2 t = 1.0 / TexSize();
+    float3 c = ToLinear(gCaptureTexture.Sample(gLinearClamp, input.uv + float2(-t.x, -t.y)).rgb)
+             + ToLinear(gCaptureTexture.Sample(gLinearClamp, input.uv + float2( t.x, -t.y)).rgb)
+             + ToLinear(gCaptureTexture.Sample(gLinearClamp, input.uv + float2(-t.x,  t.y)).rgb)
+             + ToLinear(gCaptureTexture.Sample(gLinearClamp, input.uv + float2( t.x,  t.y)).rgb);
+    return float4(c * 0.25, 1.0);
+}
+
+// ---------------------------------------------------------------------------
+// Halation source: from the 1/4-size glow source to 1/8 size (one bilinear
+// tap = 2×2 box), keeping only light above the threshold.  The threshold is
+// set in signal space (as on the slider) and decoded with the CRT gamma.
+// ---------------------------------------------------------------------------
+float4 PS_HaloDown(VS_Output input) : SV_TARGET {
+    float3 c         = gCaptureTexture.Sample(gLinearClamp, input.uv).rgb;
+    float  linThresh = pow(max(diffuseThreshold, 0.0001), crtGamma);
+    float  gate      = saturate((dot(c, kLuma) - linThresh) / max(1.0 - linThresh, 0.001));
+    return float4(c * gate, 1.0);
+}
+
+// ---------------------------------------------------------------------------
+// Separable Gaussian blur (one direction per pass).  13 taps, ±3 sigma.
+// ---------------------------------------------------------------------------
+float4 PS_Blur(VS_Output input) : SV_TARGET {
+    float3 acc  = float3(0, 0, 0);
+    float  wsum = 0.0;
+    [unroll]
+    for (int i = -6; i <= 6; i++) {
+        float w = exp(-0.5 * (i * i) / (blurSigma * blurSigma));
+        acc  += gCaptureTexture.Sample(gLinearClamp, input.uv + blurStep * i).rgb * w;
+        wsum += w;
+    }
+    return float4(acc / wsum, 1.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -282,41 +383,6 @@ float Flicker() {
 
     float f = lerp(smooth, rnd, flickerRandomness);
     return 1.0 + flickerIntensity * f * 0.15;
-}
-
-// ---------------------------------------------------------------------------
-// Diffusion bloom — luminance-gated glow, taps linearized for correct blending.
-// diffuseThreshold lives in signal (gamma) space, as shown on the slider, so
-// it is decoded with the CRT gamma before comparing against tap luminance.
-// Returns ungraded linear light.
-// ---------------------------------------------------------------------------
-float3 Diffusion(float2 uv) {
-    if (diffuseStrength < 0.001) return float3(0, 0, 0);
-
-    float2 sz        = TexSize();
-    float2 aspectFix = float2(sz.y / sz.x, 1.0);
-    float3 acc       = float3(0, 0, 0);
-    float  r1        = 0.004 * (1.0 + diffuseStrength);
-    float  r2        = 0.011 * (1.0 + diffuseStrength);
-    float  linThresh = pow(max(diffuseThreshold, 0.0001), crtGamma);
-
-    [unroll]
-    for (int i = 0; i < 8; i++) {
-        float  a   = i * 0.78539816;
-        float2 dir = float2(cos(a), sin(a)) * aspectFix;
-
-        float3 s1   = ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + dir * r1).rgb);
-        float  lum1 = dot(s1, kLuma);
-        float  g1   = max(0.0, lum1 - linThresh);
-        acc += s1 * (g1 * g1) * 0.55;
-
-        float3 s2   = ToLinear(gCaptureTexture.Sample(gLinearClamp, uv + dir * r2).rgb);
-        float  lum2 = dot(s2, kLuma);
-        float  g2   = max(0.0, lum2 - linThresh);
-        acc += s2 * (g2 * g2) * 0.25;
-    }
-
-    return acc * diffuseStrength * 0.55;
 }
 
 // ---------------------------------------------------------------------------
@@ -432,7 +498,7 @@ VS_Output VS_Sprite(uint id : SV_VertexID) {
 // Main CRT pixel shader
 // Pipeline (linear light between decode and re-encode):
 //   distort → corner mask → beam scanlines (decode + grade per line, UI
-//   composited) → + bloom/diffusion → phosphor mask → hum → vignette →
+//   composited) → + glow/halation → phosphor mask → hum → vignette →
 //   flicker → re-encode → static
 // ---------------------------------------------------------------------------
 float4 PS_Main(VS_Output input) : SV_TARGET {
@@ -454,8 +520,11 @@ float4 PS_Main(VS_Output input) : SV_TARGET {
     float4 ui      = gUITexture.Sample(gLinearClamp, uv);
     float3 col     = Beam(uv, nativeG, ui, lineDensity);
 
-    // 4. Glow fills the gaps between lines before the mask is applied.
-    col += GradeLight(Bloom(uv) + Diffusion(uv));
+    // 4. Glow and halation (pre-blurred linear light) fill the gaps between
+    //    lines before the mask is applied.
+    float3 glow = gGlowTexture.Sample(gLinearClamp, uv).rgb * glowStrength    * kGlowGain;
+    float3 halo = gHaloTexture.Sample(gLinearClamp, uv).rgb * diffuseStrength * kHaloGain;
+    col += GradeLight(glow + halo);
 
     // 5. Phosphor mask — sub-pixel phosphor geometry.
     col *= ShadowMask(input.pos.xy);

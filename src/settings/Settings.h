@@ -50,6 +50,11 @@ struct CRTSettings {
     float lineResolve         = 0.0f;  // 0–1     0 = full detail under the lines, 1 = one colour per line
     float maskCompensation    = 0.75f; // 0–1     brighten lit phosphors to offset the mask's light loss
     float cornerRadius        = 0.03f; // 0–0.25  rounded tube corners, fraction of picture height
+    float chromaBleed         = 0.0f;  // 0–1     composite colour bleed (chroma bandwidth limit)
+
+    float signalSoftness      = 0.0f;  // 0–1     horizontal softness of the luma signal
+    float glowRadius          = 6.0f;  // 1–30    glow spread, in pixels at 1080p
+    float halationRadius      = 40.0f; // 10–150  halation spread, in pixels at 1080p
     float shaderPad0          = 0.0f;  // keeps the constant buffer a multiple of 16 bytes
 
     // UI-only — not uploaded to the GPU constant buffer.
