@@ -22,7 +22,10 @@
 
 #include <dxgi1_6.h>    // IDXGIFactory6 / DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE
 #include <wincodec.h>   // IWICImagingFactory
+#include <shobjidl.h>   // IFileOpenDialog
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <vector>
 
 // WDA_EXCLUDEFROMCAPTURE: exclude our overlay window from all WGC captures
@@ -129,47 +132,88 @@ static void ApplyDefaultStyle() {
 }
 
 // ---------------------------------------------------------------------------
-// LoadCursorTexture — decodes a PNG file using WIC and uploads it as an
-// immutable D3D11 BGRA texture.  Returns the SRV; outW/outH receive the
-// image dimensions.  Returns nullptr on any failure (cursor falls back to
-// the built-in polygon shape).
+// LoadCursorImage — decodes an image file with WIC (PNG, BMP, GIF, JPEG,
+// TIFF, ICO or CUR) and uploads it as an immutable D3D11 BGRA texture.
+//
+// .cur files are icon files with a different type field and a hotspot in the
+// directory entry.  WIC only decodes icons, so the type is patched in memory
+// and the hotspot read from the header.  On failure returns false and sets
+// `error` to a short user-facing reason.
 // ---------------------------------------------------------------------------
-static Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>
-LoadCursorTexture(ID3D11Device* device, const wchar_t* path, int& outW, int& outH)
+struct CursorImage {
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+    int  w = 0, h = 0;
+    bool hasHotspot = false;   // true for .cur files
+    int  hotX = 0, hotY = 0;
+};
+
+static constexpr UINT kMaxCursorImageSize = 1024;
+
+static bool LoadCursorImage(ID3D11Device* device, const std::filesystem::path& path,
+                            CursorImage& out, std::string& error)
 {
     using namespace Microsoft::WRL;
 
-    outW = outH = 0;
+    out = {};
+
+    std::ifstream file(path, std::ios::binary);
+    if (!file) { error = "Couldn't open the file."; return false; }
+    std::vector<BYTE> bytes((std::istreambuf_iterator<char>(file)),
+                             std::istreambuf_iterator<char>());
+    if (bytes.empty()) { error = "The file is empty."; return false; }
+
+    // ICONDIR { WORD reserved = 0; WORD type (1 = icon, 2 = cursor); WORD count; }
+    // followed by ICONDIRENTRY[0], whose hotspot X/Y are the WORDs at 10 and 12.
+    if (bytes.size() >= 22 && bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 2 && bytes[3] == 0) {
+        out.hasHotspot = true;
+        out.hotX = bytes[10] | (bytes[11] << 8);
+        out.hotY = bytes[12] | (bytes[13] << 8);
+        bytes[2] = 1; // present it to WIC as an icon
+    }
 
     ComPtr<IWICImagingFactory> wic;
+    ComPtr<IWICStream>         stream;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
-            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic))))
-        return nullptr;
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic))) ||
+        FAILED(wic->CreateStream(&stream)) ||
+        FAILED(stream->InitializeFromMemory(bytes.data(), static_cast<DWORD>(bytes.size())))) {
+        error = "Image decoding is unavailable.";
+        return false;
+    }
 
-    ComPtr<IWICBitmapDecoder> decoder;
-    if (FAILED(wic->CreateDecoderFromFilename(path, nullptr, GENERIC_READ,
-            WICDecodeMetadataCacheOnDemand, &decoder)))
-        return nullptr;
-
+    ComPtr<IWICBitmapDecoder>     decoder;
     ComPtr<IWICBitmapFrameDecode> frame;
-    if (FAILED(decoder->GetFrame(0, &frame))) return nullptr;
+    if (FAILED(wic->CreateDecoderFromStream(stream.Get(), nullptr,
+            WICDecodeMetadataCacheOnDemand, &decoder)) ||
+        FAILED(decoder->GetFrame(0, &frame))) {
+        error = "Unsupported image format.";
+        return false;
+    }
 
     // Convert to 32-bit BGRA so D3D11 can consume it directly.
     ComPtr<IWICFormatConverter> conv;
-    if (FAILED(wic->CreateFormatConverter(&conv))) return nullptr;
-    if (FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA,
+    if (FAILED(wic->CreateFormatConverter(&conv)) ||
+        FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA,
             WICBitmapDitherTypeNone, nullptr, 0.0,
-            WICBitmapPaletteTypeCustom)))
-        return nullptr;
+            WICBitmapPaletteTypeCustom))) {
+        error = "Couldn't convert the image.";
+        return false;
+    }
 
     UINT w = 0, h = 0;
     conv->GetSize(&w, &h);
-    if (w == 0 || h == 0) return nullptr;
+    if (w == 0 || h == 0) { error = "The image is empty."; return false; }
+    if (w > kMaxCursorImageSize || h > kMaxCursorImageSize) {
+        error = "Image is larger than 1024 x 1024.";
+        return false;
+    }
 
     std::vector<BYTE> pixels(static_cast<size_t>(w) * h * 4);
     if (FAILED(conv->CopyPixels(nullptr, w * 4,
-            static_cast<UINT>(pixels.size()), pixels.data())))
-        return nullptr;
+            static_cast<UINT>(pixels.size()), pixels.data()))) {
+        error = "Couldn't read the image pixels.";
+        return false;
+    }
 
     D3D11_TEXTURE2D_DESC td = {};
     td.Width          = w;
@@ -186,39 +230,41 @@ LoadCursorTexture(ID3D11Device* device, const wchar_t* path, int& outW, int& out
     srd.SysMemPitch  = w * 4;
 
     ComPtr<ID3D11Texture2D> tex;
-    if (FAILED(device->CreateTexture2D(&td, &srd, &tex))) return nullptr;
-
     ComPtr<ID3D11ShaderResourceView> srv;
-    if (FAILED(device->CreateShaderResourceView(tex.Get(), nullptr, &srv)))
-        return nullptr;
+    if (FAILED(device->CreateTexture2D(&td, &srd, &tex)) ||
+        FAILED(device->CreateShaderResourceView(tex.Get(), nullptr, &srv))) {
+        error = "Couldn't upload the image to the GPU.";
+        return false;
+    }
 
-    outW = static_cast<int>(w);
-    outH = static_cast<int>(h);
-    return srv;
+    out.srv = srv;
+    out.w   = static_cast<int>(w);
+    out.h   = static_cast<int>(h);
+    return true;
 }
 
 // ---------------------------------------------------------------------------
-// DrawVirtualCursor — renders the custom cursor PNG at the barrel-distorted
+// DrawVirtualCursor — renders the cursor image at the barrel-distorted
 // intermediate-RT position `p` so it appears at the real screen position
 // after the CRT pass.
 //
 // If the texture failed to load, falls back to a simple white triangle.
-// The hot-point of the PNG is at pixel (1, 1) — subtracted from `p` so the
-// arrow tip sits exactly at the cursor position.
+// `hot` is the image's hotspot in texture pixels — subtracted from `p` so the
+// click point sits exactly at the cursor position.
 // ---------------------------------------------------------------------------
 
-// Adds an image at position `center` with the given scale, keeping the PNG's
-// hot-point (pixel 1,1) pinned to `center`.
+// Adds an image at position `center` with the given scale, keeping the
+// image's hotspot pinned to `center`.
 static void AddCursorImage(ImDrawList* dl, ImVec2 center,
-    ImTextureID tex, int texW, int texH, float scale, ImU32 tint)
+    ImTextureID tex, int texW, int texH, ImVec2 hot, float scale, ImU32 tint)
 {
-    const ImVec2 tl(center.x - 1.f * scale, center.y - 1.f * scale);
-    const ImVec2 br(tl.x + texW * scale,    tl.y + texH * scale);
+    const ImVec2 tl(center.x - hot.x * scale, center.y - hot.y * scale);
+    const ImVec2 br(tl.x + texW * scale,      tl.y + texH * scale);
     dl->AddImage(tex, tl, br, ImVec2(0, 0), ImVec2(1, 1), tint);
 }
 
 static void DrawVirtualCursor(ImDrawList* dl, ImVec2 p,
-    ImTextureID cursorTex, int texW, int texH,
+    ImTextureID cursorTex, int texW, int texH, ImVec2 hot,
     float scale, float thickness, ImU32 tint,
     bool shadowEnabled)
 {
@@ -235,17 +281,17 @@ static void DrawVirtualCursor(ImDrawList* dl, ImVec2 p,
                 };
                 for (auto& dir : dirs) {
                     ImVec2 op((p.x + dir[0] * thickness) + 5.f, (p.y + dir[1] * thickness) + 5.f);
-                    AddCursorImage(dl, op, cursorTex, texW, texH, scale, kShadow);
+                    AddCursorImage(dl, op, cursorTex, texW, texH, hot, scale, kShadow);
                 }
             }
             AddCursorImage(dl, ImVec2(p.x + 5.f, p.y + 5.f),
-                           cursorTex, texW, texH, scale, kShadow);
+                           cursorTex, texW, texH, hot, scale, kShadow);
         }
 
         // Dilation passes — render the cursor at 8 evenly-spaced offsets
         // around the center.  Each copy overlaps the adjacent ones, filling
         // in the gaps between strokes and making thin lines appear bolder.
-        // The hot-point stays at `p` because AddCursorImage subtracts (1*scale)
+        // The hot-point stays at `p` because AddCursorImage subtracts (hot*scale)
         // before placing the image; the offset only shifts the sample position.
         if (thickness > 0.f) {
             // 8 directions: cardinal + diagonal (diagonal scaled by 1/√2)
@@ -256,12 +302,12 @@ static void DrawVirtualCursor(ImDrawList* dl, ImVec2 p,
             };
             for (auto& dir : dirs) {
                 ImVec2 op(p.x + dir[0] * thickness, p.y + dir[1] * thickness);
-                AddCursorImage(dl, op, cursorTex, texW, texH, scale, tint);
+                AddCursorImage(dl, op, cursorTex, texW, texH, hot, scale, tint);
             }
         }
 
         // Main cursor — drawn on top so it stays crisp.
-        AddCursorImage(dl, p, cursorTex, texW, texH, scale, tint);
+        AddCursorImage(dl, p, cursorTex, texW, texH, hot, scale, tint);
 
     } else {
         // Fallback: plain triangle (no texture).
@@ -629,20 +675,7 @@ bool App::Init(HWND hwnd) {
     HideSystemCursors();
     m_cursorHidden = true;
 
-    // Load the custom cursor texture from the exe directory.
-    {
-        wchar_t exeBuf[MAX_PATH] = {};
-        GetModuleFileNameW(nullptr, exeBuf, MAX_PATH);
-        std::filesystem::path cursorPath =
-            std::filesystem::path(exeBuf).parent_path() / L"cursor.png";
-
-        m_cursorSRV = LoadCursorTexture(
-            m_device.Get(), cursorPath.wstring().c_str(),
-            m_cursorTexW, m_cursorTexH);
-
-        if (!m_cursorSRV)
-            OutputDebugStringA("App: cursor.png not found — using fallback cursor\n");
-    }
+    ReloadCursor();
 
     m_monitorPicker.Refresh();
 
@@ -700,6 +733,7 @@ void App::InitImGui(HWND hwnd) {
 // ---------------------------------------------------------------------------
 
 void App::ToggleMenu() {
+    if (m_modalDialogOpen) return; // overlays are hidden behind the file dialog
     m_settings.menuVisible = !m_settings.menuVisible;
 
     if (m_settings.menuVisible) {
@@ -826,6 +860,8 @@ void App::RefreshAudioDevices() {
 }
 
 void App::OnTrayNotify(WPARAM /*wParam*/, LPARAM lParam) {
+    if (m_modalDialogOpen) return; // don't nest the tray menu inside the file dialog
+
     // TrackPopupMenu blocks Tick(), so restore the cursor before the menu
     // appears and let Tick() re-hide it on the next frame after it closes.
     if (m_cursorHidden) {
@@ -863,6 +899,213 @@ void App::OnTrayNotify(WPARAM /*wParam*/, LPARAM lParam) {
         if (idx >= 0 && idx < (int)m_orderedPresets.size())
             Presets::Apply(m_settings, m_orderedPresets[idx].settings);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Cursor image — the built-in cursor.png, optionally replaced by a user image.
+// ---------------------------------------------------------------------------
+
+static std::filesystem::path PathFromUtf8(const std::string& s) {
+    return std::filesystem::path(std::u8string(s.begin(), s.end()));
+}
+
+static std::string PathToUtf8(const std::filesystem::path& p) {
+    const std::u8string u8 = p.u8string();
+    return std::string(u8.begin(), u8.end());
+}
+
+// Folder holding the user's copy of their custom cursor image.
+static std::filesystem::path CustomCursorDir() {
+    return Settings::DataDir() / L"cursors";
+}
+
+// (Re)loads the built-in cursor and, if one is configured, the custom image.
+// The active cursor (m_cursorSRV) is the custom image when it loads, otherwise
+// the built-in.  A custom image that fails to load is reported in
+// m_cursorError and left configured, so a transient failure isn't permanent.
+void App::ReloadCursor() {
+    wchar_t exeBuf[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exeBuf, MAX_PATH);
+    const std::filesystem::path builtinPath =
+        std::filesystem::path(exeBuf).parent_path() / L"cursor.png";
+
+    std::string error;
+    CursorImage builtin;
+    if (!LoadCursorImage(m_device.Get(), builtinPath, builtin, error))
+        OutputDebugStringA("App: cursor.png not found — using fallback cursor\n");
+    m_defaultCursorTexH = builtin.h;
+
+    m_cursorSRV          = builtin.srv;
+    m_cursorTexW         = builtin.w;
+    m_cursorTexH         = builtin.h;
+    m_customCursorActive = false;
+    m_cursorError.clear();
+
+    if (m_settings.customCursorPath.empty()) return;
+
+    CursorImage custom;
+    if (LoadCursorImage(m_device.Get(), PathFromUtf8(m_settings.customCursorPath), custom, error)) {
+        m_cursorSRV          = custom.srv;
+        m_cursorTexW         = custom.w;
+        m_cursorTexH         = custom.h;
+        m_customCursorActive = true;
+    } else {
+        m_cursorError = error;
+    }
+}
+
+// Scale to draw the active cursor image at.  Custom images are normalised to
+// the built-in cursor's height so the Size slider means the same on-screen
+// size whatever resolution the image is.
+float App::CursorDrawScale() const {
+    if (m_customCursorActive && m_defaultCursorTexH > 0 && m_cursorTexH > 0)
+        return m_settings.cursorScale * static_cast<float>(m_defaultCursorTexH) / m_cursorTexH;
+    return m_settings.cursorScale;
+}
+
+// Hotspot of the active cursor image, in texture pixels.  The built-in
+// cursor.png's arrow tip is at (1, 1).
+ImVec2 App::CursorHotspot() const {
+    if (!m_customCursorActive) return ImVec2(1.f, 1.f);
+    return ImVec2(
+        static_cast<float>(std::clamp(m_settings.customCursorHotX, 0, std::max(0, m_cursorTexW - 1))),
+        static_cast<float>(std::clamp(m_settings.customCursorHotY, 0, std::max(0, m_cursorTexH - 1))));
+}
+
+// Shows the standard Open dialog on its own STA thread (the shell dialog
+// needs one; this thread is a WinRT MTA).  The calling thread keeps pumping
+// its own messages so our windows stay responsive; a WM_QUIT that arrives
+// meanwhile is re-posted afterwards.  Returns false if the user cancels.
+static bool ShowOpenCursorDialog(std::filesystem::path& out) {
+    struct Ctx { std::filesystem::path result; bool ok = false; } ctx;
+
+    auto threadProc = [](LPVOID param) -> DWORD {
+        auto& c = *static_cast<Ctx*>(param);
+        if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE)))
+            return 0;
+        {
+            Microsoft::WRL::ComPtr<IFileOpenDialog> dlg;
+            if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr,
+                    CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) {
+                const COMDLG_FILTERSPEC filters[] = {
+                    { L"Images and cursors",
+                      L"*.png;*.cur;*.ico;*.bmp;*.gif;*.jpg;*.jpeg;*.tif;*.tiff" },
+                    { L"All files", L"*.*" },
+                };
+                dlg->SetFileTypes(ARRAYSIZE(filters), filters);
+                dlg->SetTitle(L"Choose a cursor image");
+                DWORD opts = 0;
+                if (SUCCEEDED(dlg->GetOptions(&opts)))
+                    dlg->SetOptions(opts | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST);
+
+                Microsoft::WRL::ComPtr<IShellItem> item;
+                PWSTR path = nullptr;
+                if (SUCCEEDED(dlg->Show(nullptr)) &&
+                    SUCCEEDED(dlg->GetResult(&item)) &&
+                    SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
+                    c.result = path;
+                    c.ok     = true;
+                    CoTaskMemFree(path);
+                }
+            }
+        }
+        CoUninitialize();
+        return 0;
+    };
+
+    HANDLE thread = CreateThread(nullptr, 0, threadProc, &ctx, 0, nullptr);
+    if (!thread) return false;
+
+    bool   quit     = false;
+    WPARAM quitCode = 0;
+    while (MsgWaitForMultipleObjects(1, &thread, FALSE, INFINITE, QS_ALLINPUT) != WAIT_OBJECT_0) {
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) { quit = true; quitCode = msg.wParam; continue; }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    CloseHandle(thread);
+    if (quit) PostQuitMessage(static_cast<int>(quitCode));
+
+    if (ctx.ok) out = std::move(ctx.result);
+    return ctx.ok;
+}
+
+// Lets the user pick an image file and installs it as the custom cursor.
+// The overlays are hidden while the dialog is up: they are topmost and would
+// otherwise cover it with a frozen frame (Tick() doesn't run meanwhile).
+void App::PickCustomCursor() {
+    m_modalDialogOpen = true;
+    SetOverlaysVisible(false);
+    if (m_cursorHidden) {
+        SystemParametersInfo(SPI_SETCURSORS, 0, nullptr, 0);
+        m_cursorHidden = false;
+    }
+
+    std::filesystem::path picked;
+    const bool ok = ShowOpenCursorDialog(picked);
+
+    SetOverlaysVisible(true);
+    if (m_settings.menuVisible)
+        SetForegroundWindow(m_outputHwnd); // keep keyboard input in the settings panel
+    m_modalDialogOpen = false;
+    // Tick()'s per-frame cursor check re-hides the system cursor.
+
+    if (ok) ImportCustomCursor(picked);
+}
+
+// Validates `src`, copies it into the cursors folder (so moving or deleting
+// the original doesn't break it) and makes it the active cursor.
+void App::ImportCustomCursor(const std::filesystem::path& src) {
+    namespace fs = std::filesystem;
+
+    CursorImage img;
+    std::string error;
+    if (!LoadCursorImage(m_device.Get(), src, img, error)) {
+        m_cursorError = error; // keep the current cursor
+        return;
+    }
+
+    std::error_code ec;
+    const fs::path dir = CustomCursorDir();
+    fs::create_directories(dir, ec);
+    const fs::path dst = dir / src.filename();
+    if (!fs::equivalent(src, dst, ec))
+        fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        m_cursorError = "Couldn't copy the image into the settings folder.";
+        return;
+    }
+
+    // Remove the previous custom image if it was a different file of ours.
+    const fs::path prev = PathFromUtf8(m_settings.customCursorPath);
+    if (!m_settings.customCursorPath.empty() && prev != dst && prev.parent_path() == dir)
+        fs::remove(prev, ec);
+
+    m_settings.customCursorPath = PathToUtf8(dst);
+    // .cur files carry their own hotspot; for plain images default to the
+    // top-left corner (where an arrow's tip usually is) — adjustable in the UI.
+    m_settings.customCursorHotX = img.hasHotspot ? img.hotX : 0;
+    m_settings.customCursorHotY = img.hasHotspot ? img.hotY : 0;
+    ReloadCursor();
+    Settings::Save(m_settingsPath, m_settings);
+}
+
+// Reverts to the built-in cursor and deletes our copy of the custom image.
+void App::ClearCustomCursor() {
+    namespace fs = std::filesystem;
+    const fs::path prev = PathFromUtf8(m_settings.customCursorPath);
+    std::error_code ec;
+    if (!m_settings.customCursorPath.empty() && prev.parent_path() == CustomCursorDir())
+        fs::remove(prev, ec);
+
+    m_settings.customCursorPath.clear();
+    m_settings.customCursorHotX = 0;
+    m_settings.customCursorHotY = 0;
+    ReloadCursor();
+    Settings::Save(m_settingsPath, m_settings);
 }
 
 // Shows or hides the primary overlay and every secondary overlay together.
@@ -981,6 +1224,13 @@ void App::MakeChildrenTransparent() {
 void App::Tick() {
     if (m_overlayPaused) return;
 
+    // Deferred from the settings panel so the dialog's modal loop never runs
+    // in the middle of an ImGui frame.
+    if (m_pendingCursorPick) {
+        m_pendingCursorPick = false;
+        PickCustomCursor();
+    }
+
     m_settings.time = std::chrono::duration<float>(Clock::now() - m_startTime).count();
 
     {
@@ -1008,6 +1258,15 @@ void App::Tick() {
             spDevs.reserve(m_audioDevices.size());
             for (const auto& d : m_audioDevices)
                 spDevs.push_back({ d.id, d.name });
+
+            SettingsPanel::CursorInfo cursorInfo;
+            cursorInfo.custom = m_customCursorActive;
+            cursorInfo.texW   = m_cursorTexW;
+            cursorInfo.texH   = m_cursorTexH;
+            cursorInfo.error  = m_cursorError;
+            if (!m_settings.customCursorPath.empty())
+                cursorInfo.name = PathToUtf8(PathFromUtf8(m_settings.customCursorPath).filename());
+
             auto result = m_settingsPanel.Draw(
                 m_settings,
                 m_monitorPicker.GetMonitors(),
@@ -1015,7 +1274,11 @@ void App::Tick() {
                 secondaryMons,
                 m_streamOpen,
                 m_orderedPresets,
-                spDevs);
+                spDevs,
+                cursorInfo);
+
+            if (result.pickCustomCursor)  m_pendingCursorPick = true;
+            if (result.clearCustomCursor) ClearCustomCursor();
 
             if (result.addMonitor)    AddMonitorOverlay(result.addMonitor);
             if (result.removeMonitor) {
@@ -1262,12 +1525,14 @@ void App::Tick() {
                     static_cast<int>(b * 255.f + 0.5f),
                     255);
             };
+            const bool useImage = m_cursorSRV && !cs.cursorPlain;
             DrawVirtualCursor(
                 ImGui::GetForegroundDrawList(),
                 ImVec2(m_rawCursorX, m_rawCursorY),   // raw position → barrel-distorted by CRT
-                (ImTextureID)((m_cursorSRV && !cs.cursorPlain) ? (void*)m_cursorSRV.Get() : nullptr),
+                (ImTextureID)(useImage ? (void*)m_cursorSRV.Get() : nullptr),
                 m_cursorTexW, m_cursorTexH,
-                cs.cursorScale,
+                CursorHotspot(),
+                useImage ? CursorDrawScale() : cs.cursorScale,
                 cs.cursorThickness,
                 toU32(cs.cursorR, cs.cursorG, cs.cursorB),
                 cs.cursorStroke);
@@ -1296,6 +1561,8 @@ void App::Tick() {
 
     POINT globalCursor = {};
     if (showSecondaryCursor) GetCursorPos(&globalCursor);
+    const float  cursorDrawScale = CursorDrawScale();
+    const ImVec2 cursorHot       = CursorHotspot();
 
     for (auto& s : m_secondaryOverlays) {
         auto f = s->capture.TryGetFrame();
@@ -1318,7 +1585,8 @@ void App::Tick() {
 
         s->renderer.RenderFrame(secTex, m_settings, nullptr, nullptr,
             secCursorSRV, secCursorX, secCursorY,
-            m_cursorTexW, m_cursorTexH, m_settings.cursorScale);
+            m_cursorTexW, m_cursorTexH, cursorDrawScale,
+            cursorHot.x, cursorHot.y);
     }
 }
 

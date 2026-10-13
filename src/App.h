@@ -15,6 +15,8 @@
 #include "settings/Presets.h"
 #include "audio/AudioLoopback.h"
 
+struct ImVec2;
+
 // App is the top-level coordinator that owns all subsystems and drives the
 // per-frame render loop.
 class App {
@@ -138,10 +140,23 @@ private:
     float m_rawCursorX = 0.f;
     float m_rawCursorY = 0.f;
 
-    // Custom cursor texture loaded from cursor.png at startup.
+    // Active cursor texture — the user's custom image if one is configured and
+    // loads, otherwise the built-in cursor.png.  See ReloadCursor().
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_cursorSRV;
-    int m_cursorTexW = 0;
-    int m_cursorTexH = 0;
+    int  m_cursorTexW         = 0;
+    int  m_cursorTexH         = 0;
+    int  m_defaultCursorTexH  = 0;     // built-in cursor.png height (size reference)
+    bool m_customCursorActive = false;
+    std::string m_cursorError;         // last custom-cursor load/import failure, shown in the UI
+    bool m_pendingCursorPick  = false; // open the file dialog at the start of the next Tick
+    bool m_modalDialogOpen    = false; // file dialog up — ignore hotkey / tray re-entry
+
+    void   ReloadCursor();
+    void   PickCustomCursor();
+    void   ImportCustomCursor(const std::filesystem::path& src);
+    void   ClearCustomCursor();
+    float  CursorDrawScale() const;
+    ImVec2 CursorHotspot() const;
 
     // Secondary overlays have no ImGui, so they can only show the image
     // cursor (as a sprite) — not the plain/fallback triangle.

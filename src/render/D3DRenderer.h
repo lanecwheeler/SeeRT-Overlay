@@ -33,14 +33,16 @@ public:
     //   Present
     // capturedTex / streamTex may each be null (renders black for that output).
     // cursorSRV: if non-null, a cursor sprite is composited into the intermediate RT
-    //            at (cursorX, cursorY) in window pixels at the given scale.
+    //            at (cursorX, cursorY) in window pixels at the given scale, with
+    //            texture pixel (cursorHotX, cursorHotY) placed at that point.
     void RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& settings,
                      ID3D11Texture2D*           streamTex    = nullptr,
                      ImDrawData*                imguiDrawData = nullptr,
                      ID3D11ShaderResourceView*  cursorSRV    = nullptr,
                      float cursorX = 0.f, float cursorY = 0.f,
                      int   cursorTexW = 0, int cursorTexH = 0,
-                     float cursorScale = 1.f);
+                     float cursorScale = 1.f,
+                     float cursorHotX = 1.f, float cursorHotY = 1.f);
 
     // Resize the main swap chain buffers (call from WM_SIZE on overlay window).
     void Resize(int w, int h);

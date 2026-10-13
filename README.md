@@ -58,6 +58,7 @@ on youtube for the gameplay I got my screenshots from!)
 - Click-through when settings panel is closed; receives input when open
 - Multi-monitor: add secondary overlays to additional monitors
 - Custom CRT cursor rendered inside the shader (barrel-distorted with the image)
+- Bring your own cursor image (PNG, CUR, ICO, BMP, GIF, JPG, TIFF) with an adjustable hotspot
 - Shake mouse to reveal cursor and settings toggle button
 - System tray icon
 

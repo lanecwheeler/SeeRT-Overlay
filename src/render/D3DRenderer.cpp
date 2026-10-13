@@ -420,7 +420,8 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
                               ID3D11Texture2D* streamTex, ImDrawData* imguiDrawData,
                               ID3D11ShaderResourceView* cursorSRV,
                               float cursorX, float cursorY,
-                              int cursorTexW, int cursorTexH, float cursorScale) {
+                              int cursorTexW, int cursorTexH, float cursorScale,
+                              float cursorHotX, float cursorHotY) {
     // Retry a resize that failed earlier (WM_SIZE won't fire again on its own).
     if (m_pendingWidth > 0 && m_pendingHeight > 0)
         Resize(m_pendingWidth, m_pendingHeight);
@@ -527,10 +528,10 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
     // Cursor sprite — drawn into the intermediate RT so it is CRT-filtered.
     // Used by secondary overlays that have no ImGui context.
     if (cursorSRV && cursorTexW > 0 && cursorTexH > 0 && m_spriteVS && m_spriteCBuf) {
-        // Hotpoint is at pixel (1,1) of the texture — subtract it so the tip
-        // sits exactly at (cursorX, cursorY).
-        const float hotX = 1.f * cursorScale;
-        const float hotY = 1.f * cursorScale;
+        // Subtract the hotspot (in texture pixels) so the click point sits
+        // exactly at (cursorX, cursorY).
+        const float hotX = cursorHotX * cursorScale;
+        const float hotY = cursorHotY * cursorScale;
         const float left = cursorX - hotX;
         const float top  = cursorY - hotY;
         const float right  = left + cursorTexW * cursorScale;

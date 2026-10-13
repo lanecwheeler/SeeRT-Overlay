@@ -59,6 +59,13 @@ struct CRTSettings {
     bool  cursorStroke      = false; // draw a black shadow offset (+5, +5) behind
     bool  cursorPlain       = false; // use fallback cursor
 
+    // Custom cursor image — UTF-8 path to the user's copy in
+    // %APPDATA%\SeeRT Overlay\cursors.  Empty = built-in cursor.png.
+    // Machine-specific, so deliberately not part of presets.
+    std::string customCursorPath;
+    int   customCursorHotX  = 0;     // hotspot (click point) in source-image pixels
+    int   customCursorHotY  = 0;
+
     // Window picker — title substrings the user has chosen to hide.
     std::vector<std::string> hiddenSources;
 

@@ -322,6 +322,49 @@ static void DrawAudioDeviceCombo(const AudioDevs& devs,
 }
 
 // ---------------------------------------------------------------------------
+// Custom cursor image controls — shared by every style's Cursor section.
+// The cursor state is set by SettingsPanel::Draw for the duration of the call
+// (threading it through every themed draw function would touch all of them).
+// ---------------------------------------------------------------------------
+static const SettingsPanel::CursorInfo* s_cursorInfo = nullptr;
+
+static void DrawCustomCursorControls(CRTSettings& s, SettingsPanel::DrawResult& result) {
+    if (!s_cursorInfo) return;
+    const auto& ci = *s_cursorInfo;
+
+    if (ci.custom)
+        ImGui::Text("Image: %s", ci.name.c_str());
+    else
+        ImGui::TextUnformatted("Image: built-in");
+
+    const bool configured = !ci.name.empty();
+    const float spacing   = ImGui::GetStyle().ItemSpacing.x;
+    const float bw = configured
+        ? (ImGui::GetContentRegionAvail().x - spacing) * 0.5f
+        : ImGui::GetContentRegionAvail().x;
+    if (ImGui::Button("Choose image...##cur", ImVec2(bw, 0.f)))
+        result.pickCustomCursor = true;
+    Tip("Use your own cursor image — PNG, CUR, ICO, BMP, GIF, JPG or TIFF, up to 1024 x 1024.\n"
+        "It is scaled to match the built-in cursor; use Size to adjust.");
+    if (configured) {
+        ImGui::SameLine();
+        if (ImGui::Button("Use default##cur", ImVec2(-1.f, 0.f)))
+            result.clearCustomCursor = true;
+        Tip("Go back to the built-in cursor.");
+    }
+
+    if (!ci.error.empty())
+        ImGui::TextColored(kRedA, "%s", ci.error.c_str());
+
+    if (ci.custom && ci.texW > 0 && ci.texH > 0) {
+        ImGui::SliderInt("Hotspot X##cur", &s.customCursorHotX, 0, ci.texW - 1);
+        Tip("Horizontal position, in image pixels, of the point that clicks.");
+        ImGui::SliderInt("Hotspot Y##cur", &s.customCursorHotY, 0, ci.texH - 1);
+        Tip("Vertical position, in image pixels, of the point that clicks.");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Shared settings body — called by every themed draw function.
 // SecFn must be callable as void(const char* label).
 // ---------------------------------------------------------------------------
@@ -465,6 +508,7 @@ static void DrawSettingsBody(
     Tip("Hides the cursor when the settings panel is closed; shake the mouse briefly to reveal it.");
     ImGui::Checkbox("Use filled cursor", &s.cursorPlain);
     Tip("Replaces the outline-style cursor with a solid filled shape.");
+    DrawCustomCursorControls(s, result);
 
     Sec("STREAMING");
     DrawAudioDeviceCombo(audioDevices, s.audioCaptureDeviceId, result);
@@ -686,6 +730,7 @@ static void DrawSectionContent(
         Tip("Auto-hide cursor when panel is closed.");
         ImGui::Checkbox("Use filled cursor", &s.cursorPlain);
         Tip("Solid filled cursor shape.");
+        DrawCustomCursorControls(s, result);
         break;
     }
     case 12:
@@ -1313,6 +1358,7 @@ static SettingsPanel::DrawResult DrawDefault(CRTSettings& s,
         Tip("Hides the cursor when the settings panel is closed; shake the mouse briefly to reveal it.");
         ImGui::Checkbox("Use filled cursor", &s.cursorPlain);
         Tip("Replaces the outline-style cursor with a solid filled shape.");
+        DrawCustomCursorControls(s, result);
     }
 
     // Streaming
@@ -1370,14 +1416,19 @@ SettingsPanel::DrawResult SettingsPanel::Draw(CRTSettings& s,
                                                const std::vector<HMONITOR>& secondaryMons,
                                                bool streamOpen,
                                                const std::vector<PresetItem>& presets,
-                                               const std::vector<AudioDevEntry>& audioDevices) {
+                                               const std::vector<AudioDevEntry>& audioDevices,
+                                               const CursorInfo& cursor) {
     if (!s.menuVisible) return {};
+    s_cursorInfo = &cursor;
+    DrawResult result;
     switch (s.menuStyle) {
-        case 1:  return DrawDefault   (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices);
-        case 2:  return DrawN64       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices);
-        case 3:  return DrawCamcorder (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices);
-        case 4:  return DrawDOS       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices);
-        case 5:  return DrawVCR       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices);
-        default: return DrawOSD       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices);
+        case 1:  result = DrawDefault   (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
+        case 2:  result = DrawN64       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
+        case 3:  result = DrawCamcorder (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
+        case 4:  result = DrawDOS       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
+        case 5:  result = DrawVCR       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
+        default: result = DrawOSD       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
     }
+    s_cursorInfo = nullptr;
+    return result;
 }

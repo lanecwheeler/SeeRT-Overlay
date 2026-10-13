@@ -9,6 +9,15 @@ class SettingsPanel {
 public:
     struct AudioDevEntry { std::string id; std::string name; };
 
+    // Custom cursor state shown in the Cursor section.
+    struct CursorInfo {
+        bool        custom = false;  // a custom image is loaded and active
+        std::string name;            // configured custom image's file name (UTF-8), if any
+        std::string error;           // last load/import failure, empty if none
+        int         texW = 0;        // active cursor image size (hotspot slider range)
+        int         texH = 0;
+    };
+
     struct DrawResult {
         // Standard actions
         HMONITOR    addMonitor       = nullptr; // add secondary overlay on this monitor
@@ -29,6 +38,10 @@ public:
         bool        selectAudioDevice = false;
         std::string audioDeviceId;
 
+        // Custom cursor image
+        bool        pickCustomCursor  = false; // open the file picker
+        bool        clearCustomCursor = false; // revert to the built-in cursor
+
         // Preset management actions from the manage modal (at most one per frame)
         enum class ManageOp { None, MoveUp, MoveDown, Delete, Rename };
         ManageOp    manageOp   = ManageOp::None;
@@ -47,5 +60,6 @@ public:
                     const std::vector<HMONITOR>& secondaryMons,
                     bool streamOpen,
                     const std::vector<PresetItem>& presets,
-                    const std::vector<AudioDevEntry>& audioDevices);
+                    const std::vector<AudioDevEntry>& audioDevices,
+                    const CursorInfo& cursor);
 };

@@ -130,6 +130,12 @@ CRTSettings Load(const fs::path& path) {
         }
         if (j.contains("audioCaptureDeviceId") && j["audioCaptureDeviceId"].is_string())
             s.audioCaptureDeviceId = j["audioCaptureDeviceId"].get<std::string>();
+        if (j.contains("customCursorPath") && j["customCursorPath"].is_string())
+            s.customCursorPath = j["customCursorPath"].get<std::string>();
+        if (j.contains("customCursorHotX") && j["customCursorHotX"].is_number_integer())
+            s.customCursorHotX = j["customCursorHotX"].get<int>();
+        if (j.contains("customCursorHotY") && j["customCursorHotY"].is_number_integer())
+            s.customCursorHotY = j["customCursorHotY"].get<int>();
         // menuVisible is intentionally NOT loaded — the panel always starts
         // closed so the overlay is click-through immediately on launch.
         if (j.contains("toggleX") && j["toggleX"].is_number()) s.toggleX = j["toggleX"].get<float>();
@@ -156,6 +162,9 @@ void Save(const fs::path& path, const CRTSettings& s) {
     j["menuStyle"]            = s.menuStyle;
     j["hiddenSources"]        = s.hiddenSources;
     j["audioCaptureDeviceId"] = s.audioCaptureDeviceId;
+    j["customCursorPath"]     = s.customCursorPath;
+    j["customCursorHotX"]     = s.customCursorHotX;
+    j["customCursorHotY"]     = s.customCursorHotY;
     // menuVisible NOT saved — always starts closed on next launch.
     j["toggleX"]              = s.toggleX;
     j["toggleY"]              = s.toggleY;
