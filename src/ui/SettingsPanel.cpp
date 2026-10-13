@@ -27,11 +27,24 @@ static constexpr ImVec4 kSecBtn  { 0.00f, 0.50f, 0.30f, 1.00f }; // secondary mo
 static constexpr ImVec4 kSecBtnH { 0.05f, 0.65f, 0.40f, 1.00f };
 static constexpr ImVec4 kSecBtnA { 0.10f, 0.80f, 0.50f, 1.00f };
 
-static const char* kStyleNames[] = {
-    "CRT OSD", "Simple", "N64", "Camcorder", "DOS Terminal", "VCR", "64 Adventure",
-    "Sword & Sorcery", "Teletext", "Vector Monitor", "Arcade Service"
+// Menu styles in the order the pickers list them.  `id` is the number saved
+// as menuStyle in settings.json, so it never changes — a retired style just
+// leaves a gap (2 was the old N64 style, replaced by 64 Adventure).
+struct MenuStyleInfo { int id; const char* name; };
+static constexpr MenuStyleInfo kStyles[] = {
+    {  0, "CRT OSD" },        {  1, "Simple" },          {  3, "Camcorder" },
+    {  4, "DOS Terminal" },   {  5, "VCR" },             {  6, "64 Adventure" },
+    {  7, "Sword & Sorcery" }, {  8, "Teletext" },       {  9, "Vector Monitor" },
+    { 10, "Arcade Service" },
 };
-static constexpr int kStyleCount = 11;
+static constexpr int kStyleCount = static_cast<int>(sizeof(kStyles) / sizeof(kStyles[0]));
+
+// Name of the style with this id, or nullptr if there is none.
+static const char* StyleName(int id) {
+    for (const MenuStyleInfo& st : kStyles)
+        if (st.id == id) return st.name;
+    return nullptr;
+}
 
 static const char* kSectionNames[] = {
     "CAPTURE SOURCE", "PRESETS", "GEOMETRY", "SCANLINES",
@@ -493,10 +506,10 @@ static void DrawCustomCursorControls(CRTSettings& s, SettingsPanel::DrawResult& 
 
 // Menu style — the style switcher.
 static void DrawStyleCombo(CRTSettings& s) {
-    if (ImGui::BeginCombo("Style##menu", kStyleNames[s.menuStyle])) {
-        for (int i = 0; i < kStyleCount; ++i)
-            if (ImGui::Selectable(kStyleNames[i], s.menuStyle == i))
-                s.menuStyle = i;
+    if (ImGui::BeginCombo("Style##menu", StyleName(s.menuStyle))) {
+        for (const MenuStyleInfo& st : kStyles)
+            if (ImGui::Selectable(st.name, s.menuStyle == st.id))
+                s.menuStyle = st.id;
         ImGui::EndCombo();
     }
     Tip("Choose the menu style.");
@@ -923,107 +936,6 @@ static void DrawSectionContent(
         DrawMenuSizeControls(s);
         break;
     }
-}
-
-// ---------------------------------------------------------------------------
-// N64 layout — Cherry Bomb font, accordion, centered menu items
-// ---------------------------------------------------------------------------
-static SettingsPanel::DrawResult DrawN64(CRTSettings& s,
-                                          const Monitors& monitors,
-                                          HMONITOR selectedMon,
-                                          const std::vector<HMONITOR>& secondaryMons,
-                                          bool streamOpen,
-                                          const std::vector<PresetItem>& presets,
-                                          const AudioDevs& audioDevices) {
-    static int s_open = -1;
-    SettingsPanel::DrawResult result;
-
-    if (StyleFonts::cherryBomb) ImGui::PushFont(StyleFonts::cherryBomb);
-
-    ImVec2 display = ImGui::GetIO().DisplaySize;
-    const float panelW = PanelWidth(560.f);
-    const float maxH   = PanelHeight(display.y * 0.78f);
-
-    ImGui::SetNextWindowPos(
-        ImVec2((display.x - panelW) * 0.5f, PanelTop(display.y * 0.11f, maxH)), ImGuiCond_Always);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(panelW, 60.f), ImVec2(panelW, maxH));
-
-    ImGuiWindowFlags flags =
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar |
-        ImGuiWindowFlags_AlwaysAutoResize;
-
-    if (!ImGui::Begin("##N64", nullptr, flags)) {
-        ImGui::End();
-        if (StyleFonts::cherryBomb) ImGui::PopFont();
-        return {};
-    }
-
-    const float avail = ImGui::GetContentRegionAvail().x;
-    const ImVec4 kGold = { 1.00f, 0.85f, 0.10f, 1.00f };
-
-    // Helper: draw a centered button, return true if clicked
-    auto CenteredButton = [&](const char* label) -> bool {
-        float bw = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.f;
-        float off = (avail - bw) * 0.5f;
-        if (off > 0.f) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + off);
-        return ImGui::Button(label);
-    };
-
-    // Big centered title
-    ImGui::SetWindowFontScale(1.55f);
-    {
-        const char* title = "SETTINGS";
-        float tw = ImGui::CalcTextSize(title).x;
-        ImGui::SetCursorPosX(ImGui::GetStyle().WindowPadding.x + (avail - tw) * 0.5f);
-        ImGui::TextColored(kGold, "%s", title);
-    }
-    ImGui::SetWindowFontScale(1.0f);
-    ImGui::Spacing();
-    DrawTopPresets(presets, result);
-    ImGui::Spacing();
-
-    // Single-open accordion section list
-    for (int i = 0; i < kSectionCount; ++i) {
-        ImGui::PushID(i);
-
-        char hdr[80];
-        bool isOpen = (s_open == i);
-        snprintf(hdr, sizeof(hdr), isOpen ? "  \u25bc  %s  " : "  \u25b6  %s  ", kSectionNames[i]);
-        if (CenteredButton(hdr)) s_open = isOpen ? -1 : i;
-
-        if (isOpen) {
-            ImGui::Indent(Sc(20.f));
-            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.58f);
-            DrawSectionContent(i, s, monitors, selectedMon, secondaryMons,
-                               streamOpen, presets, audioDevices, result);
-            ImGui::PopItemWidth();
-            ImGui::Unindent(Sc(20.f));
-            ImGui::Spacing();
-        }
-
-        ImGui::PopID();
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    // Close and Quit as centered menu items
-    if (CenteredButton("  CLOSE  ")) s.menuVisible = false;
-    Tip("Hide the settings panel.");
-    ImGui::Spacing();
-    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.05f, 0.04f, 1.f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.78f, 0.08f, 0.06f, 1.f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1.00f, 0.12f, 0.08f, 1.f));
-    if (CenteredButton("  QUIT  ")) PostQuitMessage(0);
-    Tip("Quit the overlay.");
-    ImGui::PopStyleColor(3);
-    ImGui::Spacing();
-
-    ImGui::End();
-    if (StyleFonts::cherryBomb) ImGui::PopFont();
-    return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -1796,9 +1708,9 @@ static SettingsPanel::DrawResult DrawPagedMenu(PagedMenuStyle& st, const char* w
             for (int i = 0; i < kStyleCount; ++i) {
                 gridCell(i);
                 ImGui::PushID(i);
-                if (st.GroupButton("##style", kStyleNames[i], itemSize, i, s.menuStyle == i,
+                if (st.GroupButton("##style", kStyles[i].name, itemSize, i, s.menuStyle == kStyles[i].id,
                                    PagedMenuStyle::Kind::Style))
-                    s.menuStyle = i;
+                    s.menuStyle = kStyles[i].id;
                 ImGui::PopID();
             }
             ImGui::Dummy(ImVec2(0.f, Sc(14.f)));
@@ -3241,7 +3153,7 @@ SettingsPanel::DrawResult SettingsPanel::Draw(CRTSettings& s,
                                                const std::vector<AudioDevEntry>& audioDevices,
                                                const CursorInfo& cursor) {
     if (!s.menuVisible) return {};
-    if (s.menuStyle < 0 || s.menuStyle >= kStyleCount) s.menuStyle = 0;
+    if (!StyleName(s.menuStyle)) s.menuStyle = 0;   // unknown or retired id
     s_cursorInfo = &cursor;
 
     // Menu size.  While a size slider is being dragged keep last frame's
@@ -3266,7 +3178,6 @@ SettingsPanel::DrawResult SettingsPanel::Draw(CRTSettings& s,
     DrawResult result;
     switch (s.menuStyle) {
         case 1:  result = DrawDefault   (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
-        case 2:  result = DrawN64       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
         case 3:  result = DrawCamcorder (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
         case 4:  result = DrawDOS       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
         case 5:  result = DrawVCR       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;

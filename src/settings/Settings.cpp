@@ -150,8 +150,10 @@ CRTSettings Load(const fs::path& path) {
         json j = json::parse(f);
         if (!j.is_object()) return s;
         VisualFromJson(j, s);
-        if (j.contains("menuStyle") && j["menuStyle"].is_number_integer())
+        if (j.contains("menuStyle") && j["menuStyle"].is_number_integer()) {
             s.menuStyle = j["menuStyle"].get<int>();
+            if (s.menuStyle == 2) s.menuStyle = 6;   // old N64 style → its replacement, 64 Adventure
+        }
         if (j.contains("hiddenSources") && j["hiddenSources"].is_array()) {
             for (auto& item : j["hiddenSources"])
                 if (item.is_string()) s.hiddenSources.push_back(item.get<std::string>());

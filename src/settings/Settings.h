@@ -63,7 +63,8 @@ struct CRTSettings {
     float shaderPad1          = 0.0f;
 
     // UI-only — not uploaded to the GPU constant buffer.
-    // 0 = CRT OSD  1 = Simple  2 = N64  3 = Camcorder  4 = DOS Terminal  5 = VCR
+    // 0 = CRT OSD  1 = Simple  3 = Camcorder  4 = DOS Terminal  5 = VCR
+    // (2 was the old N64 style — retired, loads as 64 Adventure)
     // 6 = 64 Adventure  7 = Sword & Sorcery  8 = Teletext  9 = Vector Monitor
     // 10 = Arcade Service
     int   menuStyle         = 0;

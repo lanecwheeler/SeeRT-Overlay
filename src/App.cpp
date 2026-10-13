@@ -329,60 +329,8 @@ static void DrawVirtualCursor(ImDrawList* dl, ImVec2 p,
     }
 }
 
-static void ApplyN64Style() {
-    ImGui::GetIO().FontGlobalScale = 1.0f;
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding    = 18.f;
-    style.ChildRounding     = 12.f;
-    style.FrameRounding     = 12.f;
-    style.GrabRounding      = 12.f;
-    style.ScrollbarRounding = 12.f;
-    style.TabRounding       = 10.f;
-    style.PopupRounding     = 16.f;
-    style.WindowBorderSize  = 0.f;
-    style.FrameBorderSize   = 0.f;
-    style.FramePadding      = ImVec2(10.f, 7.f);
-    style.ItemSpacing       = ImVec2(8.f, 10.f);
-    style.ItemInnerSpacing  = ImVec2(6.f, 5.f);
-    style.GrabMinSize       = 16.f;
-    style.WindowPadding     = ImVec2(16.f, 14.f);
-
-    ImVec4* c = style.Colors;
-    c[ImGuiCol_WindowBg]             = ImVec4(0.06f, 0.04f, 0.10f, 0.93f);
-    c[ImGuiCol_ChildBg]              = ImVec4(0.06f, 0.04f, 0.10f, 0.00f);
-    c[ImGuiCol_PopupBg]              = ImVec4(0.08f, 0.06f, 0.14f, 0.99f);
-    c[ImGuiCol_Border]               = ImVec4(0.85f, 0.68f, 0.00f, 0.90f);
-    c[ImGuiCol_BorderShadow]         = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    c[ImGuiCol_Text]                 = ImVec4(0.96f, 0.90f, 0.58f, 1.00f);
-    c[ImGuiCol_TextDisabled]         = ImVec4(0.45f, 0.38f, 0.12f, 1.00f);
-    c[ImGuiCol_FrameBg]              = ImVec4(0.04f, 0.04f, 0.30f, 1.00f);
-    c[ImGuiCol_FrameBgHovered]       = ImVec4(0.08f, 0.08f, 0.42f, 1.00f);
-    c[ImGuiCol_FrameBgActive]        = ImVec4(0.12f, 0.12f, 0.55f, 1.00f);
-    c[ImGuiCol_TitleBg]              = ImVec4(0.02f, 0.02f, 0.22f, 1.00f);
-    c[ImGuiCol_TitleBgActive]        = ImVec4(0.04f, 0.04f, 0.32f, 1.00f);
-    c[ImGuiCol_TitleBgCollapsed]     = ImVec4(0.02f, 0.02f, 0.14f, 0.92f);
-    c[ImGuiCol_SliderGrab]           = ImVec4(1.00f, 0.82f, 0.00f, 1.00f);
-    c[ImGuiCol_SliderGrabActive]     = ImVec4(1.00f, 0.92f, 0.20f, 1.00f);
-    c[ImGuiCol_Button]               = ImVec4(0.05f, 0.05f, 0.40f, 1.00f);
-    c[ImGuiCol_ButtonHovered]        = ImVec4(0.10f, 0.10f, 0.58f, 1.00f);
-    c[ImGuiCol_ButtonActive]         = ImVec4(0.90f, 0.70f, 0.00f, 1.00f);
-    c[ImGuiCol_Header]               = ImVec4(0.04f, 0.04f, 0.38f, 1.00f);
-    c[ImGuiCol_HeaderHovered]        = ImVec4(0.08f, 0.08f, 0.50f, 1.00f);
-    c[ImGuiCol_HeaderActive]         = ImVec4(0.12f, 0.12f, 0.65f, 1.00f);
-    c[ImGuiCol_Separator]            = ImVec4(0.60f, 0.48f, 0.00f, 0.70f);
-    c[ImGuiCol_SeparatorHovered]     = ImVec4(0.85f, 0.68f, 0.00f, 0.90f);
-    c[ImGuiCol_SeparatorActive]      = ImVec4(1.00f, 0.82f, 0.00f, 1.00f);
-    c[ImGuiCol_ScrollbarBg]          = ImVec4(0.02f, 0.02f, 0.10f, 1.00f);
-    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.40f, 0.32f, 0.00f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.65f, 0.52f, 0.00f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(1.00f, 0.82f, 0.00f, 1.00f);
-    c[ImGuiCol_CheckMark]            = ImVec4(1.00f, 0.82f, 0.00f, 1.00f);
-    c[ImGuiCol_NavHighlight]         = ImVec4(0.90f, 0.70f, 0.00f, 0.80f);
-    c[ImGuiCol_NavWindowingHighlight]= ImVec4(0.90f, 0.70f, 0.00f, 0.70f);
-}
-
 // 64 Adventure — bubbly late-90s console-game look: fat rounded pills, ink
-// outlines, royal-blue panels, gold accents (see DrawAdventure64).
+// outlines, royal-blue panels, gold accents (see adv64::Style in SettingsPanel.cpp).
 static void ApplyAdventure64Style() {
     ImGui::GetIO().FontGlobalScale = 1.0f;
     ImGuiStyle& style = ImGui::GetStyle();
@@ -433,7 +381,7 @@ static void ApplyAdventure64Style() {
 }
 
 // Sword & Sorcery — 80s barbarian-fantasy dungeon: dark stone, bronze trim,
-// gold grabs, purple sorcery on hover (see DrawSorcery).
+// gold grabs, purple sorcery on hover (see sorcery::Style in SettingsPanel.cpp).
 static void ApplySorceryStyle() {
     ImGui::GetIO().FontGlobalScale = 1.0f;
     ImGuiStyle& style = ImGui::GetStyle();
@@ -1981,7 +1929,6 @@ void App::BeginImGuiFrame() {
     ImGui::GetStyle() = ImGuiStyle();
     switch (m_settings.menuStyle) {
         case 1:  ApplyDefaultStyle();     break;
-        case 2:  ApplyN64Style();         break;
         case 3:  ApplyCamcorderStyle();   break;
         case 4:  ApplyDOSStyle();         break;
         case 5:  ApplyVCRStyle();         break;

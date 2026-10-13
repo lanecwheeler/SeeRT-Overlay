@@ -4,7 +4,7 @@
 // Custom per-style fonts loaded once in App::InitImGui().
 // nullptr if the TTF file was not found next to the executable.
 namespace StyleFonts {
-    inline ImFont* cherryBomb  = nullptr;  // N64       — CherryBombOne-Regular.ttf, 22 px
+    inline ImFont* cherryBomb  = nullptr;  // 64 Adventure — CherryBombOne-Regular.ttf, 22 px
     inline ImFont* chakraPetch = nullptr;  // Camcorder — ChakraPetch-Regular.ttf,   14 px
     inline ImFont* metalMania  = nullptr;  // Sword & Sorcery titles — MetalMania-Regular.ttf
     inline ImFont* cinzel      = nullptr;  // Sword & Sorcery text   — CinzelDecorative-Bold.ttf
