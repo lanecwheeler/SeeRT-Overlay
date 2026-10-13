@@ -52,6 +52,10 @@ public:
     // Called from WndProc when WM_TRAY arrives.
     void OnTrayNotify(WPARAM wParam, LPARAM lParam);
 
+    // Called from WndProc when a background update check finishes
+    // (UpdateCheck::WM_UPDATE_CHECKED).
+    void OnUpdateChecked();
+
     // Saves the next frame of the main overlay — exactly as on screen, settings
     // menu and cursor included — to Pictures\SeeRT, and shows a toast.
     void RequestScreenshot();
@@ -108,6 +112,12 @@ private:
 
     bool m_overlayPaused = false;
     void SetOverlaysVisible(bool visible);
+
+    // Updates — a newer GitHub release, once a check has found one.
+    std::string m_updateVersion;            // empty = none known
+    std::string m_updateUrl;
+    bool        m_manualUpdateCheck = false; // report the result even if there's no update
+    void OpenUpdatePage();
 
     // Short on-screen notice (e.g. "Screenshot saved"), drawn after the
     // screenshot is taken so it never appears in it.

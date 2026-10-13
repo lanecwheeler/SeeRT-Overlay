@@ -23,6 +23,7 @@ extern "C" {
 
 #include "App.h"
 #include "resource.h"
+#include "update/UpdateCheck.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg,
                                                                WPARAM wParam, LPARAM lParam);
@@ -121,6 +122,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     switch (msg) {
     case TrayIcon::WM_TRAY:
         if (g_app) g_app->OnTrayNotify(wParam, lParam);
+        return 0;
+
+    case UpdateCheck::WM_UPDATE_CHECKED:
+        if (g_app) g_app->OnUpdateChecked();
         return 0;
 
     case WM_SIZE:

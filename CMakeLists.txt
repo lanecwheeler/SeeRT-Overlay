@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
-project(SeeRTOverlay VERSION 0.1.0 LANGUAGES CXX)
+# The app version — also tag the GitHub release vX.Y.Z to match, since the
+# in-app update check compares this against the latest release's tag.
+project(SeeRTOverlay VERSION 1.1.0 LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------
 # Standards
@@ -49,10 +51,16 @@ set(SOURCES
     src/audio/AudioLoopback.h
     src/ui/TrayIcon.cpp
     src/ui/TrayIcon.h
+    src/update/UpdateCheck.cpp
+    src/update/UpdateCheck.h
     src/resources.rc
 )
 
 add_executable(SeeRTOverlay WIN32 ${SOURCES})
+
+# version.h — the project version for the code and the exe's version resource.
+configure_file(src/version.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/version.h" @ONLY)
+target_include_directories(SeeRTOverlay PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # ---------------------------------------------------------------------------
 # Windows SDK include paths for WinRT / C++/WinRT headers
@@ -128,6 +136,7 @@ target_link_libraries(SeeRTOverlay PRIVATE
     windowsapp   # C++/WinRT / WinRT runtime
     Shlwapi
     Shell32
+    winhttp      # update check
 )
 
 # ---------------------------------------------------------------------------

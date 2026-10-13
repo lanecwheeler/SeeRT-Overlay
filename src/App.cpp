@@ -3,6 +3,7 @@
 
 #include <imgui.h>
 #include "ui/StyleFonts.h"
+#include "update/UpdateCheck.h"
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
 
@@ -781,7 +782,12 @@ bool App::Init(HWND hwnd) {
         m_presetOrder = Presets::DefaultOrder(m_userPresets);
     RebuildOrderedPresets();
     RefreshAudioDevices();
-    m_trayIcon.Init(hwnd);
+    {
+        const std::string tip = std::string("SeeRT Overlay v") + UpdateCheck::CurrentVersion();
+        m_trayIcon.Init(hwnd, std::wstring(tip.begin(), tip.end()).c_str());   // ASCII
+    }
+    if (m_settings.checkForUpdates)
+        UpdateCheck::Start(hwnd);   // background; reports back via OnUpdateChecked
 
     SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
 
@@ -1080,10 +1086,15 @@ void App::OnTrayNotify(WPARAM /*wParam*/, LPARAM lParam) {
         m_cursorHidden = false;
     }
 
-    UINT cmd = m_trayIcon.HandleNotify(m_outputHwnd, lParam,
-                                        m_orderedPresets,
-                                        m_overlayPaused,
-                                        m_settings.cursorAutoHide);
+    TrayIcon::MenuState menu;
+    menu.presets         = &m_orderedPresets;
+    menu.paused          = m_overlayPaused;
+    menu.mouseHide       = m_settings.cursorAutoHide;
+    menu.version         = UpdateCheck::CurrentVersion();
+    menu.updateVersion   = m_updateVersion;
+    menu.checkingUpdates = UpdateCheck::Running();
+    menu.updatesOnLaunch = m_settings.checkForUpdates;
+    UINT cmd = m_trayIcon.HandleNotify(m_outputHwnd, lParam, menu);
     if      (cmd == TrayIcon::CMD_SETTINGS) {
         ToggleMenu();
     } else if (cmd == TrayIcon::CMD_PAUSE) {
@@ -1105,6 +1116,16 @@ void App::OnTrayNotify(WPARAM /*wParam*/, LPARAM lParam) {
         Settings::Save(m_settingsPath, m_settings);
     } else if (cmd == TrayIcon::CMD_SCREENSHOT) {
         RequestScreenshot();
+    } else if (cmd == TrayIcon::CMD_OPEN_UPDATE) {
+        OpenUpdatePage();
+    } else if (cmd == TrayIcon::CMD_NOTIFICATION) {
+        if (!m_updateVersion.empty()) OpenUpdatePage();
+    } else if (cmd == TrayIcon::CMD_CHECK_UPDATES) {
+        m_manualUpdateCheck = true;
+        UpdateCheck::Start(m_outputHwnd);
+    } else if (cmd == TrayIcon::CMD_UPDATES_ON_LAUNCH) {
+        m_settings.checkForUpdates = !m_settings.checkForUpdates;
+        Settings::Save(m_settingsPath, m_settings);
     } else if (cmd == TrayIcon::CMD_QUIT) {
         PostQuitMessage(0);
     } else if (cmd >= TrayIcon::CMD_PRESET) {
@@ -1112,6 +1133,58 @@ void App::OnTrayNotify(WPARAM /*wParam*/, LPARAM lParam) {
         if (idx >= 0 && idx < (int)m_orderedPresets.size())
             Presets::Apply(m_settings, m_orderedPresets[idx].settings);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Updates
+// ---------------------------------------------------------------------------
+
+static std::wstring WidenUtf8(const std::string& s) {
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    std::wstring w(n > 0 ? n - 1 : 0, L'\0');
+    if (n > 1) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
+    return w;
+}
+
+void App::OnUpdateChecked() {
+    const UpdateCheck::Result r = UpdateCheck::Latest();
+    const bool manual = m_manualUpdateCheck;
+    m_manualUpdateCheck = false;
+    const std::wstring current = WidenUtf8(UpdateCheck::CurrentVersion());
+
+    switch (r.status) {
+    case UpdateCheck::Status::Available:
+        m_updateVersion = r.latestVersion;
+        m_updateUrl     = r.releaseUrl;
+        // Announce each release once — the tray menu keeps offering it after.
+        if (manual || r.latestVersion != m_settings.lastNotifiedUpdate) {
+            m_trayIcon.ShowNotification(
+                L"SeeRT Overlay v" + WidenUtf8(r.latestVersion) + L" is available",
+                L"You have v" + current + L". Click to open the download page, or use "
+                L"Download Update in the tray menu.");
+            m_settings.lastNotifiedUpdate = r.latestVersion;
+            Settings::Save(m_settingsPath, m_settings);
+        }
+        break;
+    case UpdateCheck::Status::UpToDate:
+        m_updateVersion.clear();
+        if (manual)
+            m_trayIcon.ShowNotification(L"SeeRT Overlay is up to date",
+                                        L"v" + current + L" is the latest version.");
+        break;
+    default:
+        if (manual)
+            m_trayIcon.ShowNotification(L"Couldn't check for updates",
+                                        L"GitHub couldn't be reached. Check your connection and try again.");
+        break;
+    }
+}
+
+// Opens the new release's GitHub page (or the releases list) in the browser.
+void App::OpenUpdatePage() {
+    const std::wstring url = m_updateUrl.empty() ? std::wstring(UpdateCheck::ReleasesPageUrl())
+                                                 : WidenUtf8(m_updateUrl);
+    ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 // ---------------------------------------------------------------------------

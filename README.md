@@ -66,6 +66,7 @@ on youtube for the gameplay I got my screenshots from!)
 - Shake mouse to reveal cursor and settings toggle button
 - System tray icon
 - Screenshots of the overlay as you see it (Ctrl+Shift+PrtScn or the tray menu) saved to Pictures\SeeRT — normal screen capture tools can't see the overlay
+- Update check: on launch it asks GitHub whether a newer release exists and, if so, shows a notification and a Download Update item in the tray menu. Turn it off (or check by hand) under Updates in the tray menu.
 
 **Settings**
 - ImGui settings panel with multiple UI themes

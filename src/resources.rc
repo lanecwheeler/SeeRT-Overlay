@@ -1,5 +1,32 @@
-// Win32 resource script — embeds the application icon.
+// Win32 resource script — embeds the application icon and version info.
 #include <winresrc.h>
 #include "resource.h"
+#include "version.h"
 
 IDI_APP ICON "render\\assets\\monitor.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION    SEERT_VERSION_MAJOR, SEERT_VERSION_MINOR, SEERT_VERSION_PATCH, 0
+ PRODUCTVERSION SEERT_VERSION_MAJOR, SEERT_VERSION_MINOR, SEERT_VERSION_PATCH, 0
+ FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+ FILEFLAGS      0
+ FILEOS         VOS_NT_WINDOWS32
+ FILETYPE       VFT_APP
+ FILESUBTYPE    0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription",  "SeeRT Overlay"
+            VALUE "FileVersion",      SEERT_VERSION
+            VALUE "OriginalFilename", "SeeRTOverlay.exe"
+            VALUE "ProductName",      "SeeRT Overlay"
+            VALUE "ProductVersion",   SEERT_VERSION
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

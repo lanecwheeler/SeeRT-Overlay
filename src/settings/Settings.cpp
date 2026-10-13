@@ -173,6 +173,10 @@ CRTSettings Load(const fs::path& path) {
         if (j.contains("menuScale")  && j["menuScale"].is_number())  s.menuScale  = j["menuScale"].get<float>();
         if (j.contains("menuWidth")  && j["menuWidth"].is_number())  s.menuWidth  = j["menuWidth"].get<float>();
         if (j.contains("menuHeight") && j["menuHeight"].is_number()) s.menuHeight = j["menuHeight"].get<float>();
+        if (j.contains("checkForUpdates") && j["checkForUpdates"].is_boolean())
+            s.checkForUpdates = j["checkForUpdates"].get<bool>();
+        if (j.contains("lastNotifiedUpdate") && j["lastNotifiedUpdate"].is_string())
+            s.lastNotifiedUpdate = j["lastNotifiedUpdate"].get<std::string>();
     } catch (...) {
         // Malformed file — silently return defaults.
     }
@@ -204,6 +208,8 @@ void Save(const fs::path& path, const CRTSettings& s) {
     j["menuScale"]            = s.menuScale;
     j["menuWidth"]            = s.menuWidth;
     j["menuHeight"]           = s.menuHeight;
+    j["checkForUpdates"]      = s.checkForUpdates;
+    j["lastNotifiedUpdate"]   = s.lastNotifiedUpdate;
 
     f << j.dump(4);
 }

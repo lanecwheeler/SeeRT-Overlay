@@ -95,6 +95,12 @@ struct CRTSettings {
     int   customCursorHotX  = 0;     // hotspot (click point) in source-image pixels
     int   customCursorHotY  = 0;
 
+    // Updates — ask GitHub for a newer release at launch (toggled from the
+    // tray menu), and the newest version already announced, so each release
+    // only pops a notification once.
+    bool  checkForUpdates   = true;
+    std::string lastNotifiedUpdate;
+
     // Window picker — title substrings the user has chosen to hide.
     std::vector<std::string> hiddenSources;
 
