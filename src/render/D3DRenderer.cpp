@@ -10,7 +10,9 @@
 #include <filesystem>
 #include <cstddef>    // offsetof
 #include <algorithm>  // std::max
+#include <vector>
 #include <Windows.h>
+#include <wincodec.h> // WIC — screenshot PNG encoding
 
 // Bytes of CRTSettings that are actually uploaded to the GPU constant buffer.
 // Everything from menuStyle onward is CPU-only and must not be included.
@@ -31,6 +33,7 @@ static constexpr UINT kSwapChainFlags =
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "dcomp.lib")
+#pragma comment(lib, "windowscodecs.lib")
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -560,7 +563,76 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
     m_context->ClearRenderTargetView(m_rtv.Get(), black);
     CRTPass(m_rtv.Get(), m_width, m_height, post, m_uiSRV.Get());
 
+    // Grab the finished frame before Present hands the buffer to the compositor.
+    if (m_screenshotPending) {
+        m_screenshotPending = false;
+        m_screenshotResult  = SaveBackBuffer(m_screenshotPath);
+    }
+
     m_swapChain->Present(1, 0); // vsync on main
+}
+
+// ---------------------------------------------------------------------------
+// Screenshots
+// ---------------------------------------------------------------------------
+void D3DRenderer::RequestScreenshot(std::filesystem::path path) {
+    m_screenshotPath    = std::move(path);
+    m_screenshotPending = true;
+}
+
+std::optional<bool> D3DRenderer::PollScreenshot() {
+    std::optional<bool> r = m_screenshotResult;
+    m_screenshotResult.reset();
+    return r;
+}
+
+// Copies the current back buffer to the CPU and writes it as a PNG via WIC.
+bool D3DRenderer::SaveBackBuffer(const std::filesystem::path& path) {
+    ComPtr<ID3D11Texture2D> backbuffer;
+    if (FAILED(m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backbuffer)))) return false;
+
+    D3D11_TEXTURE2D_DESC td = {};
+    backbuffer->GetDesc(&td);   // B8G8R8A8_UNORM
+    td.BindFlags      = 0;
+    td.MiscFlags      = 0;
+    td.Usage          = D3D11_USAGE_STAGING;
+    td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ComPtr<ID3D11Texture2D> staging;
+    if (FAILED(m_device->CreateTexture2D(&td, nullptr, &staging))) return false;
+    m_context->CopyResource(staging.Get(), backbuffer.Get());
+
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    if (FAILED(m_context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return false;
+    const UINT stride = td.Width * 4;
+    std::vector<BYTE> pixels(static_cast<size_t>(stride) * td.Height);
+    for (UINT y = 0; y < td.Height; ++y)
+        memcpy(&pixels[y * stride], static_cast<const BYTE*>(mapped.pData) + y * mapped.RowPitch, stride);
+    m_context->Unmap(staging.Get(), 0);
+    // The swap chain ignores alpha, so its contents are undefined — make the PNG opaque.
+    for (size_t i = 3; i < pixels.size(); i += 4) pixels[i] = 255;
+
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+
+    ComPtr<IWICImagingFactory>    wic;
+    ComPtr<IWICStream>            stream;
+    ComPtr<IWICBitmapEncoder>     encoder;
+    ComPtr<IWICBitmapFrameEncode> frame;
+    WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
+    return SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                      IID_PPV_ARGS(&wic)))
+        && SUCCEEDED(wic->CreateStream(&stream))
+        && SUCCEEDED(stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE))
+        && SUCCEEDED(wic->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder))
+        && SUCCEEDED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache))
+        && SUCCEEDED(encoder->CreateNewFrame(&frame, nullptr))
+        && SUCCEEDED(frame->Initialize(nullptr))
+        && SUCCEEDED(frame->SetSize(td.Width, td.Height))
+        && SUCCEEDED(frame->SetPixelFormat(&format))
+        && format == GUID_WICPixelFormat32bppBGRA
+        && SUCCEEDED(frame->WritePixels(td.Height, stride, static_cast<UINT>(pixels.size()), pixels.data()))
+        && SUCCEEDED(frame->Commit())
+        && SUCCEEDED(encoder->Commit());
 }
 
 // ---------------------------------------------------------------------------

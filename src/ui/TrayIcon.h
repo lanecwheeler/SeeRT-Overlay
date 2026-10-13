@@ -12,6 +12,7 @@ public:
     static constexpr UINT CMD_PAUSE      = 40001;
     static constexpr UINT CMD_MOUSE      = 40002;
     static constexpr UINT CMD_QUIT       = 40003;
+    static constexpr UINT CMD_SCREENSHOT = 40004;
     static constexpr UINT CMD_PRESET     = 41000; // + index
 
     bool Init(HWND hwnd);

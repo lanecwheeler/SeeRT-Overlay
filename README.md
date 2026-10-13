@@ -65,6 +65,7 @@ on youtube for the gameplay I got my screenshots from!)
 - Bring your own cursor image (PNG, CUR, ICO, BMP, GIF, JPG, TIFF) with an adjustable hotspot
 - Shake mouse to reveal cursor and settings toggle button
 - System tray icon
+- Screenshots of the overlay as you see it (Ctrl+Shift+PrtScn or the tray menu) saved to Pictures\SeeRT — normal screen capture tools can't see the overlay
 
 **Settings**
 - ImGui settings panel with multiple UI themes

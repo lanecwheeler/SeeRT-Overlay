@@ -133,11 +133,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
 
     // Global hotkeys (registered with RegisterHotKey in WinMain).
-    //   ID 1 — Ctrl+Shift+C : toggle settings panel
-    //   ID 2 — Ctrl+Shift+Q : quit immediately
+    //   ID 1 — Ctrl+Shift+C     : toggle settings panel
+    //   ID 2 — Ctrl+Shift+Q     : quit immediately
+    //   ID 3 — Ctrl+Shift+PrtScn: save a screenshot of the overlay
     case WM_HOTKEY:
         if (wParam == 1 && g_app) { g_app->ToggleMenu(); return 0; }
         if (wParam == 2)          { PostQuitMessage(0);  return 0; }
+        if (wParam == 3 && g_app) { g_app->RequestScreenshot(); return 0; }
         return 0;
 
     // Safety net: apply WS_EX_TRANSPARENT to any child windows DXGI may
@@ -266,6 +268,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int /*nCmdShow*/) {
 
     RegisterHotKey(hwnd, 1, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'C');
     RegisterHotKey(hwnd, 2, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'Q');
+    // Not Ctrl+Shift+S: that is Save As in most apps, and a global hotkey would
+    // take it away from all of them.  The tray menu offers the same command.
+    RegisterHotKey(hwnd, 3, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_SNAPSHOT);
 
     App app;
     g_app = &app;
@@ -295,6 +300,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int /*nCmdShow*/) {
             if (msg.message == WM_QUIT) {
                 UnregisterHotKey(hwnd, 1);
                 UnregisterHotKey(hwnd, 2);
+                UnregisterHotKey(hwnd, 3);
                 app.Shutdown();
                 g_app = nullptr;
                 return static_cast<int>(msg.wParam);

@@ -32,6 +32,7 @@ UINT TrayIcon::HandleNotify(HWND hwnd, LPARAM lParam,
 
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, CMD_SETTINGS, L"Settings");
+    AppendMenuW(menu, MF_STRING, CMD_SCREENSHOT, L"Save Screenshot\tCtrl+Shift+PrtScn");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (paused    ? MF_CHECKED : 0), CMD_PAUSE, L"Pause Overlay");
     AppendMenuW(menu, MF_STRING | (mouseHide ? MF_CHECKED : 0), CMD_MOUSE, L"Hide Mouse");

@@ -52,6 +52,10 @@ public:
     // Called from WndProc when WM_TRAY arrives.
     void OnTrayNotify(WPARAM wParam, LPARAM lParam);
 
+    // Saves the next frame of the main overlay — exactly as on screen, settings
+    // menu and cursor included — to Pictures\SeeRT, and shows a toast.
+    void RequestScreenshot();
+
     // Toggle the settings panel inside the overlay.
     // Also toggles WS_EX_TRANSPARENT so the overlay is click-through when
     // the panel is closed, and receives input when it is open.
@@ -104,6 +108,13 @@ private:
 
     bool m_overlayPaused = false;
     void SetOverlaysVisible(bool visible);
+
+    // Short on-screen notice (e.g. "Screenshot saved"), drawn after the
+    // screenshot is taken so it never appears in it.
+    std::string m_toastText;
+    float       m_toastTimer = 0.f;   // seconds remaining
+    void ShowToast(std::string text) { m_toastText = std::move(text); m_toastTimer = 2.5f; }
+    void DrawToast();
 
     struct AudioDevEntry { std::string id; std::string name; };
     std::vector<AudioDevEntry> m_audioDevices;

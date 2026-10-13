@@ -5,6 +5,8 @@
 #include <wrl/client.h>   // Microsoft::WRL::ComPtr
 #include "../settings/Settings.h"
 #include <array>
+#include <filesystem>
+#include <optional>
 
 // Forward-declare so D3DRenderer.h doesn't drag in all of ImGui.
 struct ImDrawData;
@@ -63,6 +65,15 @@ public:
     void ResizeStream(int w, int h);
 
     bool HasStream() const { return m_streamSwapChain != nullptr; }
+
+    // -----------------------------------------------------------------------
+    // Screenshots — the next presented frame, exactly as on screen (CRT
+    // effect, UI and cursor included), saved as a PNG.  The overlay is
+    // excluded from screen capture, so this is the only way to grab it.
+    // -----------------------------------------------------------------------
+    void RequestScreenshot(std::filesystem::path path);
+    // Once a requested screenshot has been taken: true if saved, false if not.
+    std::optional<bool> PollScreenshot();
 
     // Accessors so other systems (e.g. ImGui) can use the same device.
     ID3D11Device*        GetDevice()  const { return m_device; }
@@ -126,6 +137,11 @@ private:
                  ID3D11ShaderResourceView* ui);
     void UpdateConstantBuffer(const CRTSettings& settings);
     void DrawSprite(const Sprite& sprite);
+    bool SaveBackBuffer(const std::filesystem::path& path);
+
+    std::filesystem::path m_screenshotPath;
+    bool                  m_screenshotPending = false;
+    std::optional<bool>   m_screenshotResult;
 
     ComPtr<ID3D11ShaderResourceView> BuildCaptureSRV(ID3D11Texture2D* tex);
     ID3D11ShaderResourceView*        GetOrBuildCaptureSRV(ID3D11Texture2D* tex);

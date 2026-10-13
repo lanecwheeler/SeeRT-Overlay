@@ -23,6 +23,8 @@
 #include <dxgi1_6.h>    // IDXGIFactory6 / DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE
 #include <wincodec.h>   // IWICImagingFactory
 #include <shobjidl.h>   // IFileOpenDialog
+#include <Shlobj.h>     // SHGetKnownFolderPath (Pictures folder)
+#include <optional>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -893,6 +895,8 @@ void App::OnTrayNotify(WPARAM /*wParam*/, LPARAM lParam) {
     } else if (cmd == TrayIcon::CMD_MOUSE) {
         m_settings.cursorAutoHide = !m_settings.cursorAutoHide;
         Settings::Save(m_settingsPath, m_settings);
+    } else if (cmd == TrayIcon::CMD_SCREENSHOT) {
+        RequestScreenshot();
     } else if (cmd == TrayIcon::CMD_QUIT) {
         PostQuitMessage(0);
     } else if (cmd >= TrayIcon::CMD_PRESET) {
@@ -1148,6 +1152,43 @@ void App::ClearCustomCursor() {
     m_settings.customCursorHotY = 0;
     ReloadCursor();
     Settings::Save(m_settingsPath, m_settings);
+}
+
+// ---------------------------------------------------------------------------
+// Screenshots
+// ---------------------------------------------------------------------------
+void App::RequestScreenshot() {
+    PWSTR pictures = nullptr;
+    std::filesystem::path dir;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Pictures, 0, nullptr, &pictures))) {
+        dir = std::filesystem::path(pictures) / L"SeeRT";
+        CoTaskMemFree(pictures);
+    } else {
+        dir = Settings::DataDir() / L"Screenshots";
+    }
+
+    SYSTEMTIME t = {};
+    GetLocalTime(&t);
+    wchar_t name[64];
+    swprintf_s(name, L"SeeRT %04u-%02u-%02u %02u-%02u-%02u.png",
+               t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+    m_renderer.RequestScreenshot(dir / name);
+}
+
+void App::DrawToast() {
+    if (m_toastTimer <= 0.f) return;
+    m_toastTimer -= m_settings.frameDelta;
+
+    const ImVec2 disp = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(disp.x * 0.5f, disp.y - 60.f), ImGuiCond_Always, ImVec2(0.5f, 1.f));
+    ImGui::SetNextWindowBgAlpha(0.85f * std::min(1.f, m_toastTimer / 0.4f)); // fade out at the end
+    constexpr ImGuiWindowFlags kFlags =
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+    if (ImGui::Begin("##toast", nullptr, kFlags))
+        ImGui::TextUnformatted(m_toastText.c_str());
+    ImGui::End();
 }
 
 // Shows or hides the primary overlay and every secondary overlay together.
@@ -1507,8 +1548,9 @@ void App::Tick() {
                 ImGui::TextColored(ImVec4(0.f, 0.85f, 1.f, 1.f), "CRT Monitor Overlay");
                 ImGui::Separator();
                 ImGui::Spacing();
-                ImGui::Text("Ctrl + Shift + C   Open / close settings");
-                ImGui::Text("Ctrl + Shift + Q   Quit");
+                ImGui::Text("Ctrl + Shift + C       Open / close settings");
+                ImGui::Text("Ctrl + Shift + PrtScn  Save a screenshot");
+                ImGui::Text("Ctrl + Shift + Q       Quit");
                 ImGui::Spacing();
                 ImGui::TextWrapped(
                     "Shake the mouse vigorously to reveal a quick-access "
@@ -1607,6 +1649,8 @@ void App::Tick() {
             }
         }
 
+        DrawToast();
+
         ImGui::Render();
         imguiDrawData = ImGui::GetDrawData();
     }
@@ -1623,6 +1667,9 @@ void App::Tick() {
         streamTex = m_streamCapture.GetFrameTexture(m_streamCurrentFrame);
 
     m_renderer.RenderFrame(tex, m_settings, streamTex, imguiDrawData);
+
+    if (const std::optional<bool> shot = m_renderer.PollScreenshot())
+        ShowToast(*shot ? "Screenshot saved to Pictures\\SeeRT" : "Couldn't save the screenshot");
 
     // Cursor state for secondary overlays — same visibility rules as primary.
     const bool showSecondaryCursor = CanDrawSecondaryCursor() &&
