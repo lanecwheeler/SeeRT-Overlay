@@ -1018,7 +1018,9 @@ static bool ShowOpenCursorDialog(std::filesystem::path& out) {
 
     bool   quit     = false;
     WPARAM quitCode = 0;
-    while (MsgWaitForMultipleObjects(1, &thread, FALSE, INFINITE, QS_ALLINPUT) != WAIT_OBJECT_0) {
+    // WAIT_OBJECT_0 + 1 = messages are waiting; anything else means the
+    // dialog thread finished (or the wait failed — don't spin on that).
+    while (MsgWaitForMultipleObjects(1, &thread, FALSE, INFINITE, QS_ALLINPUT) == WAIT_OBJECT_0 + 1) {
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) { quit = true; quitCode = msg.wParam; continue; }
