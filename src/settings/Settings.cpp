@@ -175,6 +175,8 @@ CRTSettings Load(const fs::path& path) {
         if (j.contains("menuHeight") && j["menuHeight"].is_number()) s.menuHeight = j["menuHeight"].get<float>();
         if (j.contains("checkForUpdates") && j["checkForUpdates"].is_boolean())
             s.checkForUpdates = j["checkForUpdates"].get<bool>();
+        if (j.contains("autoUpdate") && j["autoUpdate"].is_boolean())
+            s.autoUpdate = j["autoUpdate"].get<bool>();
         if (j.contains("lastNotifiedUpdate") && j["lastNotifiedUpdate"].is_string())
             s.lastNotifiedUpdate = j["lastNotifiedUpdate"].get<std::string>();
         if (j.contains("adv64RedCoins") && j["adv64RedCoins"].is_number_integer())
@@ -233,6 +235,7 @@ void Save(const fs::path& path, const CRTSettings& s) {
     j["menuWidth"]            = s.menuWidth;
     j["menuHeight"]           = s.menuHeight;
     j["checkForUpdates"]      = s.checkForUpdates;
+    j["autoUpdate"]           = s.autoUpdate;
     j["lastNotifiedUpdate"]   = s.lastNotifiedUpdate;
     j["adv64RedCoins"]        = s.adv64RedCoins;
     j["adv64Gold"]            = s.adv64Gold;

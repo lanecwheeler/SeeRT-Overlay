@@ -55,6 +55,8 @@ public:
     // Called from WndProc when a background update check finishes
     // (UpdateCheck::WM_UPDATE_CHECKED).
     void OnUpdateChecked();
+    void OnUpdateReady();     // Updater::WM_UPDATE_READY
+    void AnnounceUpdated();   // first launch after an update
 
     // Saves the next frame of the main overlay — exactly as on screen, settings
     // menu and cursor included — to Pictures\SeeRT, and shows a toast.
@@ -121,7 +123,10 @@ private:
     std::string m_updateVersion;            // empty = none known
     std::string m_updateUrl;
     bool        m_manualUpdateCheck = false; // report the result even if there's no update
+    bool        m_restartWhenReady  = false; // "Update now": install and restart once downloaded
     void OpenUpdatePage();
+    void UpdateNow();         // install (downloading first if needed) and restart
+    void RestartToUpdate();
 
     // Short on-screen notice (e.g. "Screenshot saved"), drawn after the
     // screenshot is taken so it never appears in it.

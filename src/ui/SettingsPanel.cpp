@@ -2,6 +2,7 @@
 #include "../settings/Presets.h"
 #include "StyleFonts.h"
 #include "../update/UpdateCheck.h"
+#include "../update/Updater.h"
 #include <imgui.h>
 #include <algorithm> // std::clamp
 #include <cfloat>    // FLT_MAX
@@ -568,18 +569,32 @@ static void DrawAppInfo(CRTSettings& s, SettingsPanel::DrawResult& result, bool 
     ImGui::Spacing();
 
     const UpdateCheck::Result latest   = UpdateCheck::Latest();
+    const Updater::Progress   update   = Updater::Current();
     const bool                checking = UpdateCheck::Running();
     const bool                newer    = !checking && latest.status == UpdateCheck::Status::Available;
+    const bool                ready    = update.status == Updater::Status::Ready && !Updater::Installed();
+    const bool                fetching = update.status == Updater::Status::Downloading;
 
     std::string line = std::string("SeeRT Overlay v") + UpdateCheck::CurrentVersion();
-    if (checking)                                            line += " - checking for updates...";
-    else if (newer)                                          line += " - v" + latest.latestVersion + " is available!";
+    if (ready)          line += " - v" + update.version + " is ready to install";
+    else if (fetching)  line += " - downloading v" + update.version + "... " +
+                                std::to_string(static_cast<int>(update.fraction * 100.f)) + "%";
+    else if (checking)  line += " - checking for updates...";
+    else if (newer)     line += " - v" + latest.latestVersion + " is available!";
     else if (latest.status == UpdateCheck::Status::UpToDate) line += " - up to date";
     else if (latest.status == UpdateCheck::Status::Failed)   line += " - couldn't reach GitHub";
     ImGui::TextWrapped("%s", line.c_str());
 
-    if (newer) {
-        if (ImGui::Button("Download update##update")) result.openUpdatePage = true;
+    if (ready) {
+        if (ImGui::Button("Restart to update##update")) result.restartToUpdate = true;
+        Tip("Installs the new version and starts it again.  (Otherwise it installs when you quit.)");
+    } else if (newer && !fetching) {
+        if (ImGui::Button("Update now##update")) result.updateNow = true;
+        Tip("Downloads the new version, installs it and restarts.");
+    }
+    if ((ready || newer) && !fetching) {
+        ImGui::SameLine();
+        if (ImGui::Button("What's new##update")) result.openUpdatePage = true;
         Tip("Opens the release page on GitHub.");
     }
 
@@ -595,6 +610,9 @@ static void DrawAppInfo(CRTSettings& s, SettingsPanel::DrawResult& result, bool 
         Tip("Asks GitHub whether a newer release is out each time the app starts.");
         ImGui::EndTable();
     }
+    ImGui::Checkbox("Update automatically##update", &s.autoUpdate);
+    Tip("Downloads new versions in the background and installs them the next time\n"
+        "the app restarts or quits.  Your settings and presets are kept.");
 
     if (githubLink) {
         // The address if it fits on one line (wide pixel fonts may not), else a short name.

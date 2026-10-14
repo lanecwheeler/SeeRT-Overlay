@@ -53,6 +53,8 @@ set(SOURCES
     src/ui/TrayIcon.h
     src/update/UpdateCheck.cpp
     src/update/UpdateCheck.h
+    src/update/Updater.cpp
+    src/update/Updater.h
     src/resources.rc
 )
 
@@ -138,6 +140,7 @@ target_link_libraries(SeeRTOverlay PRIVATE
     Shell32
     winhttp      # update check
     dwmapi       # the stream source window's bounds
+    bcrypt       # SHA-256 of downloaded updates
 )
 
 # ---------------------------------------------------------------------------

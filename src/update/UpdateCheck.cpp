@@ -19,6 +19,7 @@ constexpr wchar_t kProjectPage[]  = L"https://github.com/lanecwheeler/SeeRT-Over
 constexpr wchar_t kReleasesPage[] = L"https://github.com/lanecwheeler/SeeRT-Overlay/releases";
 constexpr char    kReleasesPageA[] = "https://github.com/lanecwheeler/SeeRT-Overlay/releases";
 constexpr char    kReleaseUrlPrefix[] = "https://github.com/lanecwheeler/SeeRT-Overlay/releases/";
+constexpr char    kDownloadPrefix[]   = "https://github.com/lanecwheeler/SeeRT-Overlay/releases/download/";
 constexpr size_t  kMaxResponse    = 1 << 20;   // the API's answer is a few KB
 
 // Shared between the check thread and the UI thread.  Deliberately never
@@ -44,9 +45,12 @@ struct Handle {
     explicit operator bool() const { return h != nullptr; }
 };
 
-// HTTPS GET.  Returns false if the request couldn't be made; otherwise fills
-// in the status code and (up to kMaxResponse of) the body.
-bool HttpsGet(const wchar_t* host, const wchar_t* path, DWORD& status, std::string& body) {
+// HTTPS GET of host + path, following redirects.  Returns false if the
+// request couldn't be made or the body is over maxBytes; otherwise fills in
+// the status code and the body.
+bool HttpsGet(const wchar_t* host, const wchar_t* path, const wchar_t* accept, size_t maxBytes,
+              DWORD& status, std::string& body,
+              const std::function<void(size_t, size_t)>& progress = {}) {
     const std::string  ua8 = std::string("SeeRT-Overlay/") + SEERT_VERSION;
     const std::wstring ua(ua8.begin(), ua8.end());   // ASCII
 
@@ -61,9 +65,9 @@ bool HttpsGet(const wchar_t* host, const wchar_t* path, DWORD& status, std::stri
                                       WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
     if (!request) return false;
 
-    const wchar_t headers[] = L"Accept: application/vnd.github+json\r\n"
-                              L"X-GitHub-Api-Version: 2022-11-28\r\n";
-    if (!WinHttpSendRequest(request.h, headers, static_cast<DWORD>(-1), WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+    const std::wstring headers = std::wstring(L"Accept: ") + accept + L"\r\n"
+                                 L"X-GitHub-Api-Version: 2022-11-28\r\n";
+    if (!WinHttpSendRequest(request.h, headers.c_str(), static_cast<DWORD>(-1), WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
         !WinHttpReceiveResponse(request.h, nullptr))
         return false;
 
@@ -72,16 +76,25 @@ bool HttpsGet(const wchar_t* host, const wchar_t* path, DWORD& status, std::stri
                              WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX))
         return false;
 
+    DWORD length = 0;
+    size = sizeof(length);
+    if (!WinHttpQueryHeaders(request.h, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                             WINHTTP_HEADER_NAME_BY_INDEX, &length, &size, WINHTTP_NO_HEADER_INDEX))
+        length = 0;   // not sent
+    if (length > maxBytes) return false;
+
     body.clear();
+    body.reserve(length);
     for (;;) {
         DWORD available = 0;
         if (!WinHttpQueryDataAvailable(request.h, &available)) return false;
         if (available == 0) break;
-        if (body.size() + available > kMaxResponse) return false;
+        if (body.size() + available > maxBytes) return false;
         std::vector<char> chunk(available);
         DWORD read = 0;
         if (!WinHttpReadData(request.h, chunk.data(), available, &read)) return false;
         body.append(chunk.data(), read);
+        if (progress) progress(body.size(), length);
     }
     return true;
 }
@@ -121,7 +134,7 @@ Result CheckNow() {
     Result      r;
     DWORD       status = 0;
     std::string body;
-    if (!HttpsGet(kApiHost, kLatestPath, status, body)) {
+    if (!HttpsGet(kApiHost, kLatestPath, L"application/vnd.github+json", kMaxResponse, status, body)) {
         r.status = Status::Failed;
         return r;
     }
@@ -153,8 +166,43 @@ Result CheckNow() {
         if (url.rfind(kReleaseUrlPrefix, 0) == 0) r.releaseUrl = url;
     }
 
+    // The download and its checksum — again, only from this project.
+    if (j.contains("assets") && j["assets"].is_array()) {
+        auto endsWith = [](const std::string& s, const char* tail) {
+            const size_t n = strlen(tail);
+            return s.size() >= n && s.compare(s.size() - n, n, tail) == 0;
+        };
+        for (const auto& asset : j["assets"]) {
+            if (!asset.is_object() || !asset.contains("name") || !asset["name"].is_string() ||
+                !asset.contains("browser_download_url") || !asset["browser_download_url"].is_string())
+                continue;
+            const std::string name = asset["name"].get<std::string>();
+            const std::string url  = asset["browser_download_url"].get<std::string>();
+            if (url.rfind(kDownloadPrefix, 0) != 0) continue;
+            if (endsWith(name, "-win64.zip"))             r.zipUrl = url;
+            else if (endsWith(name, "-win64.zip.sha256")) r.shaUrl = url;
+        }
+    }
+
     r.status = IsNewer(r.latestVersion, SEERT_VERSION) ? Status::Available : Status::UpToDate;
     return r;
+}
+
+bool Download(const std::string& url, std::string& body, size_t maxBytes,
+              const std::function<void(size_t, size_t)>& progress) {
+    if (url.rfind("https://", 0) != 0) return false;
+    const std::wstring wurl(url.begin(), url.end());   // release URLs are ASCII
+    wchar_t host[256] = {}, path[2048] = {};
+    URL_COMPONENTS uc = {};
+    uc.dwStructSize     = sizeof(uc);
+    uc.lpszHostName     = host;
+    uc.dwHostNameLength = static_cast<DWORD>(std::size(host));
+    uc.lpszUrlPath      = path;
+    uc.dwUrlPathLength  = static_cast<DWORD>(std::size(path));
+    if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc) || uc.nScheme != INTERNET_SCHEME_HTTPS) return false;
+
+    DWORD status = 0;
+    return HttpsGet(host, path, L"application/octet-stream", maxBytes, status, body, progress) && status == 200;
 }
 
 void Start(HWND notify) {

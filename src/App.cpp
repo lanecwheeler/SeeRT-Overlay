@@ -4,6 +4,7 @@
 #include <imgui.h>
 #include "ui/StyleFonts.h"
 #include "update/UpdateCheck.h"
+#include "update/Updater.h"
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
 
@@ -1212,6 +1213,13 @@ void App::OnTrayNotify(WPARAM /*wParam*/, LPARAM lParam) {
     menu.updateVersion   = m_updateVersion;
     menu.checkingUpdates = UpdateCheck::Running();
     menu.updatesOnLaunch = m_settings.checkForUpdates;
+    menu.autoUpdate      = m_settings.autoUpdate;
+    {
+        const Updater::Progress u = Updater::Current();
+        menu.updateReady     = u.status == Updater::Status::Ready && !Updater::Installed();
+        menu.downloadPercent = u.status == Updater::Status::Downloading ? static_cast<int>(u.fraction * 100.f) : -1;
+        if (menu.updateReady || menu.downloadPercent >= 0) menu.updateVersion = u.version;
+    }
     UINT cmd = m_trayIcon.HandleNotify(m_outputHwnd, lParam, menu);
     if      (cmd == TrayIcon::CMD_SETTINGS) {
         ToggleMenu();
@@ -1237,7 +1245,12 @@ void App::OnTrayNotify(WPARAM /*wParam*/, LPARAM lParam) {
     } else if (cmd == TrayIcon::CMD_OPEN_UPDATE) {
         OpenUpdatePage();
     } else if (cmd == TrayIcon::CMD_NOTIFICATION) {
-        if (!m_updateVersion.empty()) OpenUpdatePage();
+        if (!m_updateVersion.empty() || Updater::Current().status == Updater::Status::Ready) UpdateNow();
+    } else if (cmd == TrayIcon::CMD_UPDATE_NOW) {
+        UpdateNow();
+    } else if (cmd == TrayIcon::CMD_AUTO_UPDATE) {
+        m_settings.autoUpdate = !m_settings.autoUpdate;
+        Settings::Save(m_settingsPath, m_settings);
     } else if (cmd == TrayIcon::CMD_CHECK_UPDATES) {
         m_manualUpdateCheck = true;
         UpdateCheck::Start(m_outputHwnd);
@@ -1271,19 +1284,30 @@ void App::OnUpdateChecked() {
     const std::wstring current = WidenUtf8(UpdateCheck::CurrentVersion());
 
     switch (r.status) {
-    case UpdateCheck::Status::Available:
+    case UpdateCheck::Status::Available: {
         m_updateVersion = r.latestVersion;
         m_updateUrl     = r.releaseUrl;
+        const Updater::Progress u = Updater::Current();
+        if (u.status == Updater::Status::Ready && u.version == r.latestVersion) {
+            if (manual) OnUpdateReady();   // already downloaded: say so again
+            break;
+        }
+        // Updating automatically: download it now; it's announced when it's ready.
+        if (m_settings.autoUpdate && Updater::CanInstall() && !r.zipUrl.empty()) {
+            Updater::Download(m_outputHwnd, r);
+            break;
+        }
         // Announce each release once — the tray menu keeps offering it after.
         if (manual || r.latestVersion != m_settings.lastNotifiedUpdate) {
             m_trayIcon.ShowNotification(
                 L"SeeRT Overlay v" + WidenUtf8(r.latestVersion) + L" is available",
-                L"You have v" + current + L". Click to open the download page, or use "
-                L"Download Update in the tray menu.");
+                L"You have v" + current + L". Click to update now, or use "
+                L"Update in the tray menu.");
             m_settings.lastNotifiedUpdate = r.latestVersion;
             Settings::Save(m_settingsPath, m_settings);
         }
         break;
+    }
     case UpdateCheck::Status::UpToDate:
         m_updateVersion.clear();
         if (manual)
@@ -1296,6 +1320,68 @@ void App::OnUpdateChecked() {
                                         L"GitHub couldn't be reached. Check your connection and try again.");
         break;
     }
+}
+
+// A download finished (or failed).
+void App::OnUpdateReady() {
+    const Updater::Progress u = Updater::Current();
+    if (u.status == Updater::Status::Ready) {
+        if (m_restartWhenReady) {   // "Update now"
+            m_restartWhenReady = false;
+            RestartToUpdate();
+            return;
+        }
+        if (u.version != m_settings.lastNotifiedUpdate || m_manualUpdateCheck) {
+            m_trayIcon.ShowNotification(
+                L"SeeRT Overlay v" + WidenUtf8(u.version) + L" is ready",
+                L"It installs when you quit or restart the app. Click to restart and update now.");
+            m_settings.lastNotifiedUpdate = u.version;
+            Settings::Save(m_settingsPath, m_settings);
+        }
+        return;
+    }
+    if (u.status == Updater::Status::Failed) {
+        if (m_restartWhenReady) {
+            m_restartWhenReady = false;
+            ShowToast("Couldn't download the update - opening the download page");
+            OpenUpdatePage();
+        } else if (u.version != m_settings.lastNotifiedUpdate) {
+            m_trayIcon.ShowNotification(
+                L"SeeRT Overlay v" + WidenUtf8(u.version) + L" is available",
+                L"It couldn't be downloaded automatically. Click to try again.");
+            m_settings.lastNotifiedUpdate = u.version;
+            Settings::Save(m_settingsPath, m_settings);
+        }
+    }
+}
+
+// Install the new version and restart — downloading it first if need be.
+// Where installing isn't possible (a protected folder), the download page opens.
+void App::UpdateNow() {
+    const Updater::Progress u = Updater::Current();
+    if (u.status == Updater::Status::Ready) { RestartToUpdate(); return; }
+    if (u.status == Updater::Status::Downloading) { m_restartWhenReady = true; return; }
+    const UpdateCheck::Result r = UpdateCheck::Latest();
+    if (r.status == UpdateCheck::Status::Available && !r.zipUrl.empty() && Updater::CanInstall()) {
+        m_restartWhenReady = true;
+        Updater::Download(m_outputHwnd, r);
+        ShowToast("Downloading the update...");
+    } else {
+        OpenUpdatePage();
+    }
+}
+
+void App::RestartToUpdate() {
+    if (Updater::Install() && Updater::Restart()) {
+        PostQuitMessage(0);
+        return;
+    }
+    ShowToast("Couldn't install the update - opening the download page");
+    OpenUpdatePage();
+}
+
+void App::AnnounceUpdated() {
+    ShowToast(std::string("Updated to SeeRT Overlay v") + UpdateCheck::CurrentVersion());
 }
 
 // Opens the new release's GitHub page (or the releases list) in the browser.
@@ -1803,6 +1889,8 @@ void App::Tick() {
             // check that pops a notification even when up to date.
             if (result.checkForUpdates)   UpdateCheck::Start(m_outputHwnd);
             if (result.openUpdatePage)    OpenUpdatePage();
+            if (result.updateNow)         UpdateNow();
+            if (result.restartToUpdate)   RestartToUpdate();
             if (result.saveSettings)      Settings::Save(m_settingsPath, m_settings);
             if (result.saveDrawing)       m_pendingDrawingSave = true;   // after this frame renders
             if (result.openProjectPage)
@@ -2481,6 +2569,9 @@ void App::Shutdown() {
 
     m_trayIcon.Destroy();
     Settings::Save(m_settingsPath, m_settings);
+
+    // A downloaded update installs as the app quits, so the next launch is the new version.
+    if (Updater::Current().status == Updater::Status::Ready) Updater::Install();
 
     for (auto& s : m_secondaryOverlays) {
         s->capture.Stop();

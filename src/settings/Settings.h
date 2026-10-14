@@ -107,6 +107,7 @@ struct CRTSettings {
     // tray menu), and the newest version already announced, so each release
     // only pops a notification once.
     bool  checkForUpdates   = true;
+    bool  autoUpdate        = true;   // download a newer release and install it on the next restart
     std::string lastNotifiedUpdate;
 
     // Easter eggs in the game-style menus — progress and high scores, kept

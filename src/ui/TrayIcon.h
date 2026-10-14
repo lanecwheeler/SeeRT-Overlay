@@ -17,6 +17,8 @@ public:
     static constexpr UINT CMD_CHECK_UPDATES   = 40006;
     static constexpr UINT CMD_UPDATES_ON_LAUNCH = 40007;
     static constexpr UINT CMD_NOTIFICATION    = 40008; // the user clicked our notification
+    static constexpr UINT CMD_UPDATE_NOW      = 40009; // install (downloading first if needed) and restart
+    static constexpr UINT CMD_AUTO_UPDATE     = 40010;
     static constexpr UINT CMD_PRESET          = 41000; // + index
 
     // What the context menu shows.
@@ -28,6 +30,9 @@ public:
         std::string updateVersion;         // newer release available, or empty
         bool        checkingUpdates = false;
         bool        updatesOnLaunch = true;
+        bool        autoUpdate      = true;
+        bool        updateReady     = false;   // downloaded, waiting to install
+        int         downloadPercent = -1;      // downloading, or -1
     };
 
     // tip: the tooltip shown when hovering the icon.

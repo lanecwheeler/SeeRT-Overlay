@@ -1,5 +1,6 @@
 #pragma once
 #include <Windows.h>
+#include <functional>
 #include <string>
 
 // Checks GitHub for a newer SeeRT Overlay release.
@@ -18,6 +19,8 @@ struct Result {
     Status      status = Status::NotChecked;
     std::string latestVersion;   // the latest release's tag without the leading "v", e.g. "1.2.0"
     std::string releaseUrl;      // that release's GitHub page
+    std::string zipUrl;          // its SeeRT-Overlay-v*-win64.zip, if it has one
+    std::string shaUrl;          // and the zip's .sha256
 };
 
 // This build's version, e.g. "1.1.0".
@@ -40,5 +43,11 @@ Result Latest();
 
 // The check itself, synchronously (what Start runs on its thread).
 Result CheckNow();
+
+// Downloads an https:// URL into body (following redirects), up to maxBytes.
+// progress, if given, is called with the bytes so far and the total (0 if
+// unknown).  False on any failure, or a status other than 200.
+bool Download(const std::string& url, std::string& body, size_t maxBytes,
+              const std::function<void(size_t done, size_t total)>& progress = {});
 
 } // namespace UpdateCheck

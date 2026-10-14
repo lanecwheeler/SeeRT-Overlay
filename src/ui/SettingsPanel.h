@@ -46,6 +46,8 @@ public:
         // Updates
         bool        checkForUpdates   = false; // start an update check now
         bool        openUpdatePage    = false; // open the new release's page
+        bool        updateNow         = false; // download, install and restart
+        bool        restartToUpdate   = false; // install the downloaded update and restart
         bool        openProjectPage   = false; // open the project's GitHub page
 
         // Easter eggs — progress or a high score changed; save it now

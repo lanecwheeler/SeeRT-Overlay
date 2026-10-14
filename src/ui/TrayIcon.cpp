@@ -66,9 +66,16 @@ UINT TrayIcon::HandleNotify(HWND hwnd, LPARAM lParam, const MenuState& state) {
     // with the current version, a manual check and the launch-check toggle.
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     if (!state.updateVersion.empty()) {
-        const std::wstring item = L"Download Update (v" + Widen(state.updateVersion) + L")...";
-        AppendMenuW(menu, MF_STRING, CMD_OPEN_UPDATE, item.c_str());
-        SetMenuDefaultItem(menu, CMD_OPEN_UPDATE, FALSE);   // shown in bold
+        const std::wstring v = Widen(state.updateVersion);
+        if (state.downloadPercent >= 0) {
+            const std::wstring item = L"Downloading Update (v" + v + L")... " + std::to_wstring(state.downloadPercent) + L"%";
+            AppendMenuW(menu, MF_STRING | MF_GRAYED, CMD_UPDATE_NOW, item.c_str());
+        } else {
+            const std::wstring item = state.updateReady ? L"Restart to Update (v" + v + L")"
+                                                        : L"Update to v" + v;
+            AppendMenuW(menu, MF_STRING, CMD_UPDATE_NOW, item.c_str());
+            SetMenuDefaultItem(menu, CMD_UPDATE_NOW, FALSE);   // shown in bold
+        }
     }
     {
         HMENU sub = CreatePopupMenu();
@@ -81,6 +88,13 @@ UINT TrayIcon::HandleNotify(HWND hwnd, LPARAM lParam, const MenuState& state) {
             AppendMenuW(sub, MF_STRING, CMD_CHECK_UPDATES, L"Check for Updates Now");
         AppendMenuW(sub, MF_STRING | (state.updatesOnLaunch ? MF_CHECKED : 0), CMD_UPDATES_ON_LAUNCH,
                     L"Check for Updates on Launch");
+        AppendMenuW(sub, MF_STRING | (state.autoUpdate ? MF_CHECKED : 0), CMD_AUTO_UPDATE,
+                    L"Update Automatically");
+        if (!state.updateVersion.empty()) {
+            AppendMenuW(sub, MF_SEPARATOR, 0, nullptr);
+            const std::wstring item = L"What's New in v" + Widen(state.updateVersion) + L"...";
+            AppendMenuW(sub, MF_STRING, CMD_OPEN_UPDATE, item.c_str());
+        }
         AppendMenuW(menu, MF_POPUP, (UINT_PTR)sub, L"Updates");
     }
 

@@ -24,6 +24,7 @@ extern "C" {
 #include "App.h"
 #include "resource.h"
 #include "update/UpdateCheck.h"
+#include "update/Updater.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg,
                                                                WPARAM wParam, LPARAM lParam);
@@ -130,6 +131,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
     case UpdateCheck::WM_UPDATE_CHECKED:
         if (g_app) g_app->OnUpdateChecked();
+        return 0;
+
+    case Updater::WM_UPDATE_READY:
+        if (g_app) g_app->OnUpdateReady();
         return 0;
 
     case WM_SHOW_RUNNING:
@@ -255,7 +260,7 @@ static void CrashTerminate() {
 // ---------------------------------------------------------------------------
 // WinMain
 // ---------------------------------------------------------------------------
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int /*nCmdShow*/) {
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR cmdLine, int /*nCmdShow*/) {
     SetUnhandledExceptionFilter(CrashFilter);
     std::set_terminate(CrashTerminate);
     winrt::init_apartment();
@@ -263,7 +268,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int /*nCmdShow*/) {
     // One copy at a time, wherever it was started from.  A second copy hands
     // over to the first — showing its settings panel — and exits.  (The mutex
     // is released when this process ends, however it ends.)
+    // Started by an update: the old copy is on its way out, so wait (up to
+    // ten seconds) for it to let go rather than handing over to it.
+    const bool updated = cmdLine && strstr(cmdLine, "--updated");
     HANDLE instanceMutex = CreateMutexW(nullptr, FALSE, L"Local\\SeeRTOverlay.SingleInstance");
+    for (int i = 0; updated && i < 50 && instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS; ++i) {
+        CloseHandle(instanceMutex);
+        Sleep(200);
+        instanceMutex = CreateMutexW(nullptr, FALSE, L"Local\\SeeRTOverlay.SingleInstance");
+    }
     if (instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
         if (HWND running = FindWindowW(L"SeeRTOverlay_Output", nullptr)) {
             DWORD pid = 0;
@@ -274,6 +287,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int /*nCmdShow*/) {
         CloseHandle(instanceMutex);
         return 0;
     }
+
+    Updater::CleanUp();   // leftovers of the last update
 
     RegisterWindowClasses(hInstance);
 
@@ -311,6 +326,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int /*nCmdShow*/) {
         g_app = nullptr;
         return 1;
     }
+
+    if (updated) app.AnnounceUpdated();
 
     MSG msg = {};
     while (true) {
