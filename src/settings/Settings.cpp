@@ -177,6 +177,8 @@ CRTSettings Load(const fs::path& path) {
             s.checkForUpdates = j["checkForUpdates"].get<bool>();
         if (j.contains("autoUpdate") && j["autoUpdate"].is_boolean())
             s.autoUpdate = j["autoUpdate"].get<bool>();
+        if (j.contains("installWithoutAsking") && j["installWithoutAsking"].is_boolean())
+            s.installWithoutAsking = j["installWithoutAsking"].get<bool>();
         if (j.contains("lastNotifiedUpdate") && j["lastNotifiedUpdate"].is_string())
             s.lastNotifiedUpdate = j["lastNotifiedUpdate"].get<std::string>();
         if (j.contains("lastRunVersion") && j["lastRunVersion"].is_string())
@@ -238,6 +240,7 @@ void Save(const fs::path& path, const CRTSettings& s) {
     j["menuHeight"]           = s.menuHeight;
     j["checkForUpdates"]      = s.checkForUpdates;
     j["autoUpdate"]           = s.autoUpdate;
+    j["installWithoutAsking"] = s.installWithoutAsking;
     j["lastNotifiedUpdate"]   = s.lastNotifiedUpdate;
     j["lastRunVersion"]       = s.lastRunVersion;
     j["adv64RedCoins"]        = s.adv64RedCoins;

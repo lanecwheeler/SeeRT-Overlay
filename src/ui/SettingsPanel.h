@@ -73,6 +73,8 @@ public:
     static ImVec2 DrawingSize(float scale);
     // Opens the patch notes window the next time the menu draws.
     static void   ShowPatchNotes();
+    // Asks whether to install the downloaded update, the next time the menu draws.
+    static void   ShowInstallPrompt();
     static void   DrawDrawing(ImDrawList* dl, float scale);
 
     DrawResult Draw(CRTSettings& settings,

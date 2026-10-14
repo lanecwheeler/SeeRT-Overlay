@@ -2,6 +2,7 @@
 
 ## 1.4.0
 - Patch notes: open them from Menu & App, and they show up by themselves the first time a new version runs.
+- Updates ask before installing: once a new version has downloaded, you choose when to restart and install it. (Turn on Install updates without asking to have it install when you quit.)
 - The first update delivered by the new auto-updater. Hello from the future!
 
 ## 1.3.0

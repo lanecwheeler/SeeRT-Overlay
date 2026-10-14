@@ -66,7 +66,7 @@ on youtube for the gameplay I got my screenshots from!)
 - Shake mouse to reveal cursor and settings toggle button
 - System tray icon
 - Screenshots of the overlay as you see it (Ctrl+Shift+PrtScn or the tray menu) saved to Pictures\SeeRT — normal screen capture tools can't see the overlay
-- Updates itself: on launch it asks GitHub whether a newer release exists, downloads it in the background (checking its SHA-256), and installs it the next time the app quits or restarts — or straight away with Restart to Update. Settings and presets are kept. Turn off automatic updating, or the check itself, under Updates in the tray menu or in Menu & App; you can still update with one click when told about a new version.
+- Updates itself: on launch it asks GitHub whether a newer release exists, downloads it in the background (checking its SHA-256), then asks before installing it — Restart & update installs it and restarts, keeping your settings and presets. Turn off the automatic download, or the check itself, under Updates in the tray menu or in Menu & App (where you can also let it install without asking when you quit).
 - Stream window for OBS and other capture software, optionally with the settings menu shown in it too
 - Only one copy runs at a time — starting it again just opens the running copy's settings
 

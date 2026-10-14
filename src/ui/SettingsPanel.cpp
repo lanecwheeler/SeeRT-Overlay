@@ -100,6 +100,7 @@ static constexpr float kScreenMargin = 20.f;
 static bool s_quitRequested = false;
 static bool s_saveDrawingRequested = false;   // Computer Lab's Save button
 static bool s_patchNotesRequested  = false;   // open the patch notes window
+static bool s_installPromptRequested = false; // ask whether to install the downloaded update
 static void RequestQuit() { s_quitRequested = true; }
 
 // A fixed layout length (padding, sidebar width, font size, ...) at the menu scale.
@@ -590,7 +591,7 @@ static void DrawAppInfo(CRTSettings& s, SettingsPanel::DrawResult& result, bool 
 
     if (ready) {
         if (ImGui::Button("Restart to update##update")) result.restartToUpdate = true;
-        Tip("Installs the new version and starts it again.  (Otherwise it installs when you quit.)");
+        Tip("Installs the new version and starts it again.  Your settings and presets are kept.");
     } else if (newer && !fetching) {
         if (ImGui::Button("Update now##update")) result.updateNow = true;
         Tip("Downloads the new version, installs it and restarts.");
@@ -613,9 +614,11 @@ static void DrawAppInfo(CRTSettings& s, SettingsPanel::DrawResult& result, bool 
         Tip("Asks GitHub whether a newer release is out each time the app starts.");
         ImGui::EndTable();
     }
-    ImGui::Checkbox("Update automatically##update", &s.autoUpdate);
-    Tip("Downloads new versions in the background and installs them the next time\n"
-        "the app restarts or quits.  Your settings and presets are kept.");
+    ImGui::Checkbox("Download updates automatically##update", &s.autoUpdate);
+    Tip("Downloads new versions in the background, then asks before installing them.");
+    ImGui::Checkbox("Install updates without asking##update", &s.installWithoutAsking);
+    Tip("Installs a downloaded update when you quit the app, without asking first.\n"
+        "Your settings and presets are kept.");
     if (ImGui::Button("Patch notes##update")) s_patchNotesRequested = true;
     Tip("What's changed in each version.");
 
@@ -5707,6 +5710,42 @@ static void DrawPatchNotes(int styleId) {
 
 void SettingsPanel::ShowPatchNotes() { s_patchNotesRequested = true; }
 
+// "vX is ready to install" — Restart & update, What's new, or Later.
+static void DrawInstallPrompt(int styleId, SettingsPanel::DrawResult& result) {
+    static constexpr const char* kPopupId = "##installprompt";
+    if (s_installPromptRequested) {
+        ImGui::OpenPopup(kPopupId);
+        s_installPromptRequested = false;
+    }
+
+    ImFont* font = MenuFont(styleId);
+    if (font) ImGui::PushFont(font, font->LegacySize);
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal(kPopupId, nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
+                               ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+        const Updater::Progress u = Updater::Current();
+        ImGui::PushFont(nullptr, ImGui::GetFontSize() * 1.2f);
+        ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_CheckMark], "SeeRT Overlay v%s is ready to install", u.version.c_str());
+        ImGui::PopFont();
+        ImGui::TextUnformatted("Install it now?  The app restarts; your settings and presets are kept.");
+        ImGui::Spacing();
+        if (ImGui::Button("Restart & update")) {
+            result.restartToUpdate = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("What's new")) result.openUpdatePage = true;
+        ImGui::SameLine();
+        if (ImGui::Button("Later") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    if (font) ImGui::PopFont();
+}
+
+void SettingsPanel::ShowInstallPrompt() { s_installPromptRequested = true; }
+
 static void DrawQuitConfirm(int styleId) {
     static constexpr const char* kPopupId = "##quitconfirm";
     if (s_quitRequested) {
@@ -5823,6 +5862,7 @@ SettingsPanel::DrawResult SettingsPanel::Draw(CRTSettings& s,
     }
     DrawQuitConfirm(s.menuStyle);
     DrawPatchNotes(s.menuStyle);
+    DrawInstallPrompt(s.menuStyle, result);
     result.saveDrawing = s_saveDrawingRequested;
     s_saveDrawingRequested = false;
 

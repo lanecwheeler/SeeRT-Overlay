@@ -1214,6 +1214,7 @@ void App::OnTrayNotify(WPARAM /*wParam*/, LPARAM lParam) {
     menu.checkingUpdates = UpdateCheck::Running();
     menu.updatesOnLaunch = m_settings.checkForUpdates;
     menu.autoUpdate      = m_settings.autoUpdate;
+    menu.installWithoutAsking = m_settings.installWithoutAsking;
     {
         const Updater::Progress u = Updater::Current();
         menu.updateReady     = u.status == Updater::Status::Ready && !Updater::Installed();
@@ -1245,11 +1246,20 @@ void App::OnTrayNotify(WPARAM /*wParam*/, LPARAM lParam) {
     } else if (cmd == TrayIcon::CMD_OPEN_UPDATE) {
         OpenUpdatePage();
     } else if (cmd == TrayIcon::CMD_NOTIFICATION) {
-        if (!m_updateVersion.empty() || Updater::Current().status == Updater::Status::Ready) UpdateNow();
+        // A ready update asks first; otherwise this is "update now".
+        if (Updater::Current().status == Updater::Status::Ready && !Updater::Installed()) {
+            m_installPromptPending = true;
+            if (!m_settings.menuVisible) ToggleMenu();
+        } else if (!m_updateVersion.empty()) {
+            UpdateNow();
+        }
     } else if (cmd == TrayIcon::CMD_UPDATE_NOW) {
         UpdateNow();
     } else if (cmd == TrayIcon::CMD_AUTO_UPDATE) {
         m_settings.autoUpdate = !m_settings.autoUpdate;
+        Settings::Save(m_settingsPath, m_settings);
+    } else if (cmd == TrayIcon::CMD_INSTALL_SILENTLY) {
+        m_settings.installWithoutAsking = !m_settings.installWithoutAsking;
         Settings::Save(m_settingsPath, m_settings);
     } else if (cmd == TrayIcon::CMD_CHECK_UPDATES) {
         m_manualUpdateCheck = true;
@@ -1331,10 +1341,12 @@ void App::OnUpdateReady() {
             RestartToUpdate();
             return;
         }
+        // Ask: in the menu now if it's open, else the next time it opens.
+        m_installPromptPending = true;
         if (u.version != m_settings.lastNotifiedUpdate || m_manualUpdateCheck) {
             m_trayIcon.ShowNotification(
-                L"SeeRT Overlay v" + WidenUtf8(u.version) + L" is ready",
-                L"It installs when you quit or restart the app. Click to restart and update now.");
+                L"SeeRT Overlay v" + WidenUtf8(u.version) + L" is ready to install",
+                L"Click to install it, or use Restart to Update in the tray menu whenever you like.");
             m_settings.lastNotifiedUpdate = u.version;
             Settings::Save(m_settingsPath, m_settings);
         }
@@ -1388,6 +1400,8 @@ void App::AnnounceUpdated() {
 // menu on its patch notes.  Settings from before 1.4 don't record the last
 // version run; there, the update we announced being this version counts.
 void App::ShowWhatsNewIfUpdated() {
+    if (Updater::Current().status == Updater::Status::Ready) m_installPromptPending = true;   // staged earlier
+
     const std::string current = UpdateCheck::CurrentVersion();
     const std::string& last   = m_settings.lastRunVersion;
     const bool updated = last.empty() ? m_settings.lastNotifiedUpdate == current
@@ -1891,6 +1905,11 @@ void App::Tick() {
             if (!m_settings.customCursorPath.empty())
                 cursorInfo.name = PathToUtf8(PathFromUtf8(m_settings.customCursorPath).filename());
 
+            // A downloaded update asks before installing, once the menu is open.
+            if (m_installPromptPending && m_settings.menuVisible) {
+                m_installPromptPending = false;
+                SettingsPanel::ShowInstallPrompt();
+            }
             auto result = m_settingsPanel.Draw(
                 m_settings,
                 m_monitorPicker.GetMonitors(),
@@ -2588,8 +2607,8 @@ void App::Shutdown() {
     m_trayIcon.Destroy();
     Settings::Save(m_settingsPath, m_settings);
 
-    // A downloaded update installs as the app quits, so the next launch is the new version.
-    if (Updater::Current().status == Updater::Status::Ready) Updater::Install();
+    // A downloaded update installs as the app quits only if the user said not to ask.
+    if (m_settings.installWithoutAsking && Updater::Current().status == Updater::Status::Ready) Updater::Install();
 
     for (auto& s : m_secondaryOverlays) {
         s->capture.Stop();

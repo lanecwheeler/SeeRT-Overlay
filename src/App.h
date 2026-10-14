@@ -125,6 +125,7 @@ private:
     std::string m_updateUrl;
     bool        m_manualUpdateCheck = false; // report the result even if there's no update
     bool        m_restartWhenReady  = false; // "Update now": install and restart once downloaded
+    bool        m_installPromptPending = false; // ask about the downloaded update when the menu is open
     void OpenUpdatePage();
     void UpdateNow();         // install (downloading first if needed) and restart
     void RestartToUpdate();

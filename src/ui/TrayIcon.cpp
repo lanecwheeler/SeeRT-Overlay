@@ -89,7 +89,9 @@ UINT TrayIcon::HandleNotify(HWND hwnd, LPARAM lParam, const MenuState& state) {
         AppendMenuW(sub, MF_STRING | (state.updatesOnLaunch ? MF_CHECKED : 0), CMD_UPDATES_ON_LAUNCH,
                     L"Check for Updates on Launch");
         AppendMenuW(sub, MF_STRING | (state.autoUpdate ? MF_CHECKED : 0), CMD_AUTO_UPDATE,
-                    L"Update Automatically");
+                    L"Download Updates Automatically");
+        AppendMenuW(sub, MF_STRING | (state.installWithoutAsking ? MF_CHECKED : 0), CMD_INSTALL_SILENTLY,
+                    L"Install Updates Without Asking");
         if (!state.updateVersion.empty()) {
             AppendMenuW(sub, MF_SEPARATOR, 0, nullptr);
             const std::wstring item = L"What's New in v" + Widen(state.updateVersion) + L"...";

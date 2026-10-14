@@ -19,6 +19,7 @@ public:
     static constexpr UINT CMD_NOTIFICATION    = 40008; // the user clicked our notification
     static constexpr UINT CMD_UPDATE_NOW      = 40009; // install (downloading first if needed) and restart
     static constexpr UINT CMD_AUTO_UPDATE     = 40010;
+    static constexpr UINT CMD_INSTALL_SILENTLY = 40011;
     static constexpr UINT CMD_PRESET          = 41000; // + index
 
     // What the context menu shows.
@@ -31,6 +32,7 @@ public:
         bool        checkingUpdates = false;
         bool        updatesOnLaunch = true;
         bool        autoUpdate      = true;
+        bool        installWithoutAsking = false;
         bool        updateReady     = false;   // downloaded, waiting to install
         int         downloadPercent = -1;      // downloading, or -1
     };

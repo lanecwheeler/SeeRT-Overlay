@@ -107,7 +107,8 @@ struct CRTSettings {
     // tray menu), and the newest version already announced, so each release
     // only pops a notification once.
     bool  checkForUpdates   = true;
-    bool  autoUpdate        = true;   // download a newer release and install it on the next restart
+    bool  autoUpdate        = true;   // download a newer release in the background (installing still asks)
+    bool  installWithoutAsking = false;   // install a downloaded update when the app quits, without asking
     std::string lastNotifiedUpdate;
     std::string lastRunVersion;      // to show the patch notes once after an update
 
