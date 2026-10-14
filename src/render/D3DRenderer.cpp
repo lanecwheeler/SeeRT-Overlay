@@ -514,24 +514,6 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
     m_context->OMSetRenderTargets(0, nullptr, nullptr);
 
     // -----------------------------------------------------------------------
-    // STREAM — CRT of streamTex → stream swap chain.  No UI layer, so the
-    // stream output is always a clean, UI-free CRT image.  It gets its own
-    // pre-pass chain, sized to the stream source.
-    // -----------------------------------------------------------------------
-    if (m_streamSwapChain && m_streamRtv && streamTex) {
-        if (ID3D11ShaderResourceView* streamSRV = GetOrBuildCaptureSRV(streamTex)) {
-            D3D11_TEXTURE2D_DESC sd = {};
-            streamTex->GetDesc(&sd);
-            const PostResult post = RunPostChain(m_streamPost, streamSRV,
-                static_cast<int>(sd.Width), static_cast<int>(sd.Height), settings);
-
-            m_context->ClearRenderTargetView(m_streamRtv.Get(), black);
-            CRTPass(m_streamRtv.Get(), m_streamWidth, m_streamHeight, post, nullptr);
-            m_streamSwapChain->Present(0, 0); // no vsync — driven by main Present
-        }
-    }
-
-    // -----------------------------------------------------------------------
     // UI LAYER — settings panel, cursor and other sprites, drawn into their
     // own transparent RT.  The CRT pass composites it over the picture, so it
     // still gets curvature, scanlines and the mask, but per-line resolve
@@ -556,6 +538,32 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
     m_context->OMSetRenderTargets(0, nullptr, nullptr);
 
     // -----------------------------------------------------------------------
+    // STREAM — CRT of streamTex → stream swap chain, with its own pre-pass
+    // chain sized to the stream source.  The UI layer goes in only when the
+    // menu-in-stream option is on; otherwise the stream is a clean picture.
+    // -----------------------------------------------------------------------
+    if (m_streamSwapChain && m_streamRtv && streamTex) {
+        if (ID3D11ShaderResourceView* streamSRV = GetOrBuildCaptureSRV(streamTex)) {
+            D3D11_TEXTURE2D_DESC sd = {};
+            streamTex->GetDesc(&sd);
+            const PostResult post = RunPostChain(m_streamPost, streamSRV,
+                static_cast<int>(sd.Width), static_cast<int>(sd.Height), settings);
+
+            ID3D11ShaderResourceView* streamUI = nullptr;
+            if (m_streamUIEnabled) {
+                BlitStreamUI(static_cast<int>(sd.Width), static_cast<int>(sd.Height));
+                streamUI = m_streamUI.srv.Get();
+            }
+            m_context->RSSetState(m_rsState.Get());
+            m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            m_context->IASetInputLayout(nullptr);
+            m_context->ClearRenderTargetView(m_streamRtv.Get(), black);
+            CRTPass(m_streamRtv.Get(), m_streamWidth, m_streamHeight, post, streamUI);
+            m_streamSwapChain->Present(0, 0); // no vsync — driven by main Present
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // PRE-PASSES + PASS 2 — CRT of the picture → main back buffer → Present.
     // -----------------------------------------------------------------------
     const PostResult post = RunPostChain(m_mainPost, m_intermediateSRV.Get(),
@@ -570,6 +578,54 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
     }
 
     m_swapChain->Present(1, 0); // vsync on main
+}
+
+// ---------------------------------------------------------------------------
+// Menu in the stream
+// ---------------------------------------------------------------------------
+void D3DRenderer::SetStreamUI(bool enabled, const RECT& uiRect, const RECT& srcRect) {
+    m_streamUIEnabled = enabled && srcRect.right > srcRect.left && srcRect.bottom > srcRect.top;
+    m_streamUIRect    = uiRect;
+    m_streamSrcRect   = srcRect;
+}
+
+// Copies the UI layer into m_streamUI (w x h, standing for the stream
+// source's area on screen), placed by the viewport so each part of the menu
+// lands over the part of the source it covers on screen.
+void D3DRenderer::BlitStreamUI(int w, int h) {
+    if (m_streamUI.w != w || m_streamUI.h != h || !m_streamUI.rtv)
+        if (!CreateRenderTarget(m_streamUI, w, h, DXGI_FORMAT_R8G8B8A8_UNORM)) return;
+
+    const float clear[4] = { 0.f, 0.f, 0.f, 0.f };
+    m_context->ClearRenderTargetView(m_streamUI.rtv.Get(), clear);
+
+    const float sx = static_cast<float>(w) / static_cast<float>(m_streamSrcRect.right - m_streamSrcRect.left);
+    const float sy = static_cast<float>(h) / static_cast<float>(m_streamSrcRect.bottom - m_streamSrcRect.top);
+    D3D11_VIEWPORT vp = {};
+    vp.TopLeftX = static_cast<float>(m_streamUIRect.left - m_streamSrcRect.left) * sx;
+    vp.TopLeftY = static_cast<float>(m_streamUIRect.top  - m_streamSrcRect.top)  * sy;
+    vp.Width    = static_cast<float>(m_streamUIRect.right  - m_streamUIRect.left) * sx;
+    vp.Height   = static_cast<float>(m_streamUIRect.bottom - m_streamUIRect.top)  * sy;
+    vp.MaxDepth = 1.f;
+    if (vp.Width <= 0.f || vp.Height <= 0.f) return;
+
+    ID3D11RenderTargetView* rtv = m_streamUI.rtv.Get();
+    m_context->OMSetRenderTargets(1, &rtv, nullptr);
+    m_context->OMSetBlendState(nullptr, nullptr, 0xffffffff);   // copy alpha as it is
+    m_context->RSSetViewports(1, &vp);
+    m_context->RSSetState(m_rsState.Get());
+    m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    m_context->IASetInputLayout(nullptr);
+    m_context->VSSetShader(m_vs.Get(), nullptr, 0);
+    m_context->PSSetShader(m_blitPS.Get(), nullptr, 0);
+    ID3D11SamplerState* samp = m_sampler.Get();
+    m_context->PSSetSamplers(0, 1, &samp);
+    ID3D11ShaderResourceView* src = m_uiSRV.Get();
+    m_context->PSSetShaderResources(0, 1, &src);
+    m_context->Draw(3, 0);
+    ID3D11ShaderResourceView* nullSrv = nullptr;
+    m_context->PSSetShaderResources(0, 1, &nullSrv);
+    m_context->OMSetRenderTargets(0, nullptr, nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -590,16 +646,46 @@ std::optional<bool> D3DRenderer::PollScreenshot() {
 bool D3DRenderer::SaveBackBuffer(const std::filesystem::path& path) {
     ComPtr<ID3D11Texture2D> backbuffer;
     if (FAILED(m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backbuffer)))) return false;
+    return SaveTexturePng(backbuffer.Get(), path);
+}
 
+// Renders drawData on white into an off-screen w x h target and saves it.
+bool D3DRenderer::SaveDrawData(ImDrawData* drawData, int w, int h, const std::filesystem::path& path) {
+    if (!drawData || w <= 0 || h <= 0) return false;
     D3D11_TEXTURE2D_DESC td = {};
-    backbuffer->GetDesc(&td);   // B8G8R8A8_UNORM
+    td.Width      = static_cast<UINT>(w);
+    td.Height     = static_cast<UINT>(h);
+    td.MipLevels  = 1;
+    td.ArraySize  = 1;
+    td.Format     = DXGI_FORMAT_B8G8R8A8_UNORM;
+    td.SampleDesc = { 1, 0 };
+    td.BindFlags  = D3D11_BIND_RENDER_TARGET;
+    ComPtr<ID3D11Texture2D>        tex;
+    ComPtr<ID3D11RenderTargetView> rtv;
+    if (FAILED(m_device->CreateTexture2D(&td, nullptr, &tex)) ||
+        FAILED(m_device->CreateRenderTargetView(tex.Get(), nullptr, &rtv)))
+        return false;
+
+    const float white[4] = { 1.f, 1.f, 1.f, 1.f };
+    m_context->ClearRenderTargetView(rtv.Get(), white);
+    ID3D11RenderTargetView* r = rtv.Get();
+    m_context->OMSetRenderTargets(1, &r, nullptr);
+    ImGui_ImplDX11_RenderDrawData(drawData);   // sets its own viewport from the draw data
+    m_context->OMSetRenderTargets(0, nullptr, nullptr);
+    return SaveTexturePng(tex.Get(), path);
+}
+
+// Copies a B8G8R8A8 texture to the CPU and writes it as an opaque PNG via WIC.
+bool D3DRenderer::SaveTexturePng(ID3D11Texture2D* source, const std::filesystem::path& path) {
+    D3D11_TEXTURE2D_DESC td = {};
+    source->GetDesc(&td);
     td.BindFlags      = 0;
     td.MiscFlags      = 0;
     td.Usage          = D3D11_USAGE_STAGING;
     td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     ComPtr<ID3D11Texture2D> staging;
     if (FAILED(m_device->CreateTexture2D(&td, nullptr, &staging))) return false;
-    m_context->CopyResource(staging.Get(), backbuffer.Get());
+    m_context->CopyResource(staging.Get(), source);
 
     D3D11_MAPPED_SUBRESOURCE mapped = {};
     if (FAILED(m_context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return false;
@@ -608,7 +694,7 @@ bool D3DRenderer::SaveBackBuffer(const std::filesystem::path& path) {
     for (UINT y = 0; y < td.Height; ++y)
         memcpy(&pixels[y * stride], static_cast<const BYTE*>(mapped.pData) + y * mapped.RowPitch, stride);
     m_context->Unmap(staging.Get(), 0);
-    // The swap chain ignores alpha, so its contents are undefined — make the PNG opaque.
+    // Alpha isn't meaningful here (the swap chain ignores it) — make the PNG opaque.
     for (size_t i = 3; i < pixels.size(); i += 4) pixels[i] = 255;
 
     std::error_code ec;

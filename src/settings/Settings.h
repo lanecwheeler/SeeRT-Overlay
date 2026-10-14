@@ -6,6 +6,13 @@
 
 // CRTSettings is the single source-of-truth for all shader + post-process parameters.
 // Packed to 16-byte boundary to match the HLSL constant buffer layout exactly.
+// A signature in Web 1.0's guestbook.
+struct GuestbookEntry {
+    std::string name;
+    std::string message;
+    std::string date;   // YYYY-MM-DD
+};
+
 struct CRTSettings {
     float curvatureX        = 0.1f;   // 0–0.5  barrel/pincushion X
     float curvatureY        = 0.1f;   // 0–0.5  barrel/pincushion Y
@@ -66,7 +73,7 @@ struct CRTSettings {
     // 0 = CRT OSD  1 = Simple  3 = Camcorder  4 = DOS Terminal  5 = VCR
     // (2 was the old N64 style — retired, loads as 64 Adventure)
     // 6 = 64 Adventure  7 = Sword & Sorcery  8 = Teletext  9 = Vector Monitor
-    // 10 = Arcade Service.  Ids never change; the pickers' order is kStyles
+    // 10 = Arcade Service  11 = Computer Lab  12 = Web 1.0.  Ids never change; the pickers' order is kStyles
     // in SettingsPanel.cpp.
     int   menuStyle         = 8;      // Teletext
     bool  menuVisible       = false;  // toggle button hides/shows the settings panel
@@ -102,8 +109,22 @@ struct CRTSettings {
     bool  checkForUpdates   = true;
     std::string lastNotifiedUpdate;
 
+    // Easter eggs in the game-style menus — progress and high scores, kept
+    // between launches (and, like the rest of the menu state, not in presets).
+    int   adv64RedCoins     = 0;      // 64 Adventure: a bit per red coin found
+    bool  adv64Gold         = false;  // 64 Adventure: gold buttons (once all 8 are found)
+    int   vectorHighScore   = 0;      // Vector Monitor's Asteroids
+    std::string vectorHighName = "AAA";
+    int   arcadeHighScore   = 0;      // Arcade Service's Breakout
+    int   webHits           = 0;      // Web 1.0's visitor counter: times the menu was opened
+    std::vector<GuestbookEntry> guestbook;   // Web 1.0's guestbook, oldest first
+
     // Window picker — title substrings the user has chosen to hide.
     std::vector<std::string> hiddenSources;
+
+    // Stream window — also show the settings menu (and cursor, while it's
+    // open) in the stream output, so viewers can see the menu.
+    bool  streamShowMenu    = false;
 
     // Audio capture — endpoint ID of the render device to loopback-capture.
     // "__none__" = disabled (no audio streamed). "" = Windows default render device.

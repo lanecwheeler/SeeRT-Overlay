@@ -4,6 +4,7 @@
 #include "MonitorPicker.h"
 #include <string>
 #include <vector>
+#include <imgui.h>   // ImVec2, ImDrawList
 
 class SettingsPanel {
 public:
@@ -45,6 +46,12 @@ public:
         // Updates
         bool        checkForUpdates   = false; // start an update check now
         bool        openUpdatePage    = false; // open the new release's page
+        bool        openProjectPage   = false; // open the project's GitHub page
+
+        // Easter eggs — progress or a high score changed; save it now
+        bool        saveSettings      = false;
+        // Computer Lab's Save button — save the drawing (see DrawDrawing)
+        bool        saveDrawing       = false;
 
         // Preset management actions from the manage modal (at most one per frame)
         enum class ManageOp { None, MoveUp, MoveDown, Delete, Rename };
@@ -58,6 +65,12 @@ public:
     //   selectedMon — currently active capture monitor (highlighted).
     //   streamOpen  — whether the stream window is currently visible.
     // Returns actions to be carried out by the App layer.
+    // Computer Lab's drawing, for saving: its size at `scale` times its size
+    // on the canvas (0 x 0 when there's nothing drawn), and the drawing itself
+    // into dl, top-left at (0, 0).  The background is left to the caller.
+    static ImVec2 DrawingSize(float scale);
+    static void   DrawDrawing(ImDrawList* dl, float scale);
+
     DrawResult Draw(CRTSettings& settings,
                     const std::vector<MonitorPicker::MonitorEntry>& monitors,
                     HMONITOR selectedMon,

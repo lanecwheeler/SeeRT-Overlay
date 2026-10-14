@@ -23,7 +23,8 @@ struct Result {
 // This build's version, e.g. "1.1.0".
 const char* CurrentVersion();
 
-// The project's releases page on GitHub.
+// The project's page and its releases page on GitHub.
+const wchar_t* ProjectPageUrl();
 const wchar_t* ReleasesPageUrl();
 
 // True if version a is newer than b.  Compares dot-separated numbers

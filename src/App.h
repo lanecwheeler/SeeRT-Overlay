@@ -59,6 +59,7 @@ public:
     // Saves the next frame of the main overlay — exactly as on screen, settings
     // menu and cursor included — to Pictures\SeeRT, and shows a toast.
     void RequestScreenshot();
+    void SaveDrawing();
 
     // Toggle the settings panel inside the overlay.
     // Also toggles WS_EX_TRANSPARENT so the overlay is click-through when
@@ -99,6 +100,9 @@ private:
     winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame m_streamCurrentFrame{ nullptr };
     HWND         m_streamHwnd = nullptr;
     bool         m_streamOpen = false;
+    HWND         m_streamSourceHwnd = nullptr;   // what the stream window shows: a window,
+    HMONITOR     m_streamSourceMon  = nullptr;   // or a monitor
+    bool         m_pendingDrawingSave = false;
     AudioLoopback m_audioLoopback;
 
     D3DRenderer   m_renderer;

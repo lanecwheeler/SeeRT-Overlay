@@ -25,6 +25,7 @@
 #include <wincodec.h>   // IWICImagingFactory
 #include <shobjidl.h>   // IFileOpenDialog
 #include <Shlobj.h>     // SHGetKnownFolderPath (Pictures folder)
+#include <dwmapi.h>     // DwmGetWindowAttribute (the stream source window's bounds)
 #include <optional>
 #include <filesystem>
 #include <fstream>
@@ -585,6 +586,108 @@ static void ApplyArcadeStyle() {
     c[ImGuiCol_NavHighlight]         = ImVec4(1.00f, 1.00f, 0.00f, 1.00f);
 }
 
+// Computer Lab — a 90s classroom drawing program: notebook paper, crayon
+// colours, chunky rounded controls (see the complab namespace in SettingsPanel.cpp).
+static void ApplyComputerLabStyle() {
+    ImGui::GetIO().FontGlobalScale = 1.0f;
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding    = 6.f;
+    style.ChildRounding     = 6.f;
+    style.FrameRounding     = 9.f;
+    style.GrabRounding      = 9.f;
+    style.ScrollbarRounding = 9.f;
+    style.TabRounding       = 8.f;
+    style.PopupRounding     = 8.f;
+    style.WindowBorderSize  = 2.f;
+    style.PopupBorderSize   = 2.f;
+    style.FrameBorderSize   = 1.5f;
+    style.FramePadding      = ImVec2(9.f, 5.f);
+    style.ItemSpacing       = ImVec2(10.f, 9.f);
+    style.ItemInnerSpacing  = ImVec2(10.f, 6.f);
+    style.GrabMinSize       = 16.f;
+    style.ScrollbarSize     = 14.f;
+    style.WindowPadding     = ImVec2(14.f, 12.f);
+
+    ImVec4* c = style.Colors;
+    c[ImGuiCol_WindowBg]             = ImVec4(0.99f, 0.98f, 0.93f, 1.00f);   // paper
+    c[ImGuiCol_ChildBg]              = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_PopupBg]              = ImVec4(0.99f, 0.98f, 0.93f, 1.00f);
+    c[ImGuiCol_Border]               = ImVec4(0.21f, 0.21f, 0.27f, 0.85f);   // pencil
+    c[ImGuiCol_BorderShadow]         = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_Text]                 = ImVec4(0.16f, 0.16f, 0.22f, 1.00f);
+    c[ImGuiCol_TextDisabled]         = ImVec4(0.45f, 0.45f, 0.52f, 1.00f);
+    c[ImGuiCol_FrameBg]              = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+    c[ImGuiCol_FrameBgHovered]       = ImVec4(0.90f, 0.95f, 1.00f, 1.00f);
+    c[ImGuiCol_FrameBgActive]        = ImVec4(0.82f, 0.90f, 1.00f, 1.00f);
+    c[ImGuiCol_SliderGrab]           = ImVec4(0.90f, 0.20f, 0.20f, 1.00f);   // red crayon
+    c[ImGuiCol_SliderGrabActive]     = ImVec4(0.20f, 0.43f, 0.86f, 1.00f);   // blue crayon
+    c[ImGuiCol_CheckMark]            = ImVec4(0.24f, 0.62f, 0.29f, 1.00f);   // green crayon
+    c[ImGuiCol_Button]               = ImVec4(0.98f, 0.82f, 0.16f, 1.00f);   // yellow crayon
+    c[ImGuiCol_ButtonHovered]        = ImVec4(1.00f, 0.88f, 0.36f, 1.00f);
+    c[ImGuiCol_ButtonActive]         = ImVec4(0.96f, 0.55f, 0.12f, 1.00f);   // orange crayon
+    c[ImGuiCol_Header]               = ImVec4(0.65f, 0.80f, 0.98f, 1.00f);
+    c[ImGuiCol_HeaderHovered]        = ImVec4(0.75f, 0.87f, 1.00f, 1.00f);
+    c[ImGuiCol_HeaderActive]         = ImVec4(0.55f, 0.73f, 0.96f, 1.00f);
+    c[ImGuiCol_Separator]            = ImVec4(0.59f, 0.75f, 0.92f, 1.00f);   // ruled line
+    c[ImGuiCol_ScrollbarBg]          = ImVec4(0.00f, 0.00f, 0.00f, 0.04f);
+    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.20f, 0.43f, 0.86f, 0.80f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.20f, 0.43f, 0.86f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.90f, 0.20f, 0.20f, 1.00f);
+    c[ImGuiCol_ModalWindowDimBg]     = ImVec4(0.00f, 0.00f, 0.00f, 0.35f);
+    c[ImGuiCol_NavHighlight]         = ImVec4(0.90f, 0.20f, 0.20f, 1.00f);
+}
+
+// Web 1.0 — a 90s homepage in a 90s browser: black page, white text, grey
+// form controls and navy selection (see the web namespace in SettingsPanel.cpp).
+static void ApplyWebStyle() {
+    ImGui::GetIO().FontGlobalScale = 1.0f;
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding    = 0.f;
+    style.ChildRounding     = 0.f;
+    style.FrameRounding     = 0.f;
+    style.GrabRounding      = 0.f;
+    style.ScrollbarRounding = 0.f;
+    style.TabRounding       = 0.f;
+    style.PopupRounding     = 0.f;
+    style.WindowBorderSize  = 1.f;
+    style.PopupBorderSize   = 1.f;
+    style.FrameBorderSize   = 1.f;
+    style.FramePadding      = ImVec2(7.f, 4.f);
+    style.ItemSpacing       = ImVec2(10.f, 8.f);
+    style.ItemInnerSpacing  = ImVec2(8.f, 6.f);
+    style.GrabMinSize       = 14.f;
+    style.ScrollbarSize     = 16.f;
+    style.WindowPadding     = ImVec2(10.f, 8.f);
+
+    ImVec4* c = style.Colors;
+    c[ImGuiCol_WindowBg]             = ImVec4(0.00f, 0.00f, 0.00f, 0.97f);
+    c[ImGuiCol_ChildBg]              = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_PopupBg]              = ImVec4(0.00f, 0.00f, 0.00f, 0.97f);
+    c[ImGuiCol_Border]               = ImVec4(0.75f, 0.75f, 0.75f, 1.00f);
+    c[ImGuiCol_BorderShadow]         = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_Text]                 = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+    c[ImGuiCol_TextDisabled]         = ImVec4(0.67f, 0.67f, 0.67f, 1.00f);
+    c[ImGuiCol_FrameBg]              = ImVec4(0.09f, 0.09f, 0.14f, 1.00f);
+    c[ImGuiCol_FrameBgHovered]       = ImVec4(0.12f, 0.12f, 0.26f, 1.00f);
+    c[ImGuiCol_FrameBgActive]        = ImVec4(0.00f, 0.00f, 0.50f, 1.00f);   // navy
+    c[ImGuiCol_SliderGrab]           = ImVec4(0.75f, 0.75f, 0.75f, 1.00f);   // button grey
+    c[ImGuiCol_SliderGrabActive]     = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+    c[ImGuiCol_CheckMark]            = ImVec4(0.00f, 1.00f, 0.00f, 1.00f);   // lime
+    c[ImGuiCol_Button]               = ImVec4(0.50f, 0.50f, 0.50f, 1.00f);
+    c[ImGuiCol_ButtonHovered]        = ImVec4(0.62f, 0.62f, 0.62f, 1.00f);
+    c[ImGuiCol_ButtonActive]         = ImVec4(0.38f, 0.38f, 0.38f, 1.00f);
+    c[ImGuiCol_Header]               = ImVec4(0.00f, 0.00f, 0.50f, 1.00f);   // selection navy
+    c[ImGuiCol_HeaderHovered]        = ImVec4(0.00f, 0.00f, 0.67f, 1.00f);
+    c[ImGuiCol_HeaderActive]         = ImVec4(0.00f, 0.00f, 0.80f, 1.00f);
+    c[ImGuiCol_Separator]            = ImVec4(0.50f, 0.50f, 0.50f, 1.00f);
+    c[ImGuiCol_ScrollbarBg]          = ImVec4(0.25f, 0.25f, 0.25f, 1.00f);
+    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.75f, 0.75f, 0.75f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.85f, 0.85f, 0.85f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+    c[ImGuiCol_ModalWindowDimBg]     = ImVec4(0.00f, 0.00f, 0.00f, 0.45f);
+    c[ImGuiCol_NavHighlight]         = ImVec4(1.00f, 1.00f, 0.00f, 1.00f);
+}
+
 static void ApplyCamcorderStyle() {
     ImGui::GetIO().FontGlobalScale = 1.0f;
     ImGuiStyle& style = ImGui::GetStyle();
@@ -938,6 +1041,21 @@ void App::InitImGui(HWND hwnd) {
         StyleFonts::bedstead    = io.Fonts->AddFontFromFileTTF(ttf("Bedstead.otf").c_str(),              20.f);
         StyleFonts::shareTech   = io.Fonts->AddFontFromFileTTF(ttf("ShareTechMono-Regular.ttf").c_str(), 18.f);
         StyleFonts::pressStart  = io.Fonts->AddFontFromFileTTF(ttf("PressStart2P-Regular.ttf").c_str(),  16.f);
+        StyleFonts::shortStack  = io.Fonts->AddFontFromFileTTF(ttf("ShortStack-Regular.ttf").c_str(),    20.f);
+
+        // Web 1.0's fonts come from Windows itself, if it has them.
+        wchar_t winDir[MAX_PATH] = {};
+        GetWindowsDirectoryW(winDir, MAX_PATH);
+        auto systemFont = [&](const char* name, float size) -> ImFont* {
+            const std::filesystem::path p = std::filesystem::path(winDir) / "Fonts" / name;
+            std::error_code ec;
+            if (!std::filesystem::exists(p, ec)) return nullptr;
+            const std::u8string u8 = p.u8string();
+            return io.Fonts->AddFontFromFileTTF(std::string(u8.begin(), u8.end()).c_str(), size);
+        };
+        StyleFonts::times  = systemFont("times.ttf",   18.f);
+        StyleFonts::comic  = systemFont("comicbd.ttf", 30.f);
+        StyleFonts::msSans = systemFont("micross.ttf", 13.f);
     }
 }
 
@@ -1440,7 +1558,8 @@ void App::ClearCustomCursor() {
 // ---------------------------------------------------------------------------
 // Screenshots
 // ---------------------------------------------------------------------------
-void App::RequestScreenshot() {
+// Where screenshots and drawings go: Pictures\SeeRT, named "<prefix> <date> <time>.png".
+static std::filesystem::path PicturePath(const wchar_t* prefix) {
     PWSTR pictures = nullptr;
     std::filesystem::path dir;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Pictures, 0, nullptr, &pictures))) {
@@ -1452,10 +1571,38 @@ void App::RequestScreenshot() {
 
     SYSTEMTIME t = {};
     GetLocalTime(&t);
-    wchar_t name[64];
-    swprintf_s(name, L"SeeRT %04u-%02u-%02u %02u-%02u-%02u.png",
+    wchar_t name[96];
+    swprintf_s(name, L"%s %04u-%02u-%02u %02u-%02u-%02u.png", prefix,
                t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
-    m_renderer.RequestScreenshot(dir / name);
+    return dir / name;
+}
+
+void App::RequestScreenshot() {
+    m_renderer.RequestScreenshot(PicturePath(L"SeeRT"));
+}
+
+// Saves Computer Lab's drawing: drawn again, at twice its size on screen, on
+// white, off screen — so the picture is just the drawing, without the CRT.
+void App::SaveDrawing() {
+    constexpr float kScale = 2.f;
+    const ImVec2 size = SettingsPanel::DrawingSize(kScale);
+    if (size.x <= 0.f || size.y <= 0.f) return;
+
+    ImDrawList dl(ImGui::GetDrawListSharedData());
+    dl._ResetForNewFrame();
+    dl.PushTexture(ImGui::GetIO().Fonts->TexRef);
+    dl.PushClipRect(ImVec2(0.f, 0.f), size);
+    SettingsPanel::DrawDrawing(&dl, kScale);
+
+    ImDrawData data;
+    data.Valid            = true;
+    data.DisplayPos       = ImVec2(0.f, 0.f);
+    data.DisplaySize      = size;
+    data.FramebufferScale = ImVec2(1.f, 1.f);
+    data.AddDrawList(&dl);
+    const bool ok = m_renderer.SaveDrawData(&data, static_cast<int>(size.x), static_cast<int>(size.y),
+                                            PicturePath(L"SeeRT Drawing"));
+    ShowToast(ok ? "Drawing saved to Pictures\\SeeRT" : "Couldn't save the drawing");
 }
 
 void App::DrawToast() {
@@ -1656,6 +1803,10 @@ void App::Tick() {
             // check that pops a notification even when up to date.
             if (result.checkForUpdates)   UpdateCheck::Start(m_outputHwnd);
             if (result.openUpdatePage)    OpenUpdatePage();
+            if (result.saveSettings)      Settings::Save(m_settingsPath, m_settings);
+            if (result.saveDrawing)       m_pendingDrawingSave = true;   // after this frame renders
+            if (result.openProjectPage)
+                ShellExecuteW(nullptr, L"open", UpdateCheck::ProjectPageUrl(), nullptr, nullptr, SW_SHOWNORMAL);
 
             if (result.addMonitor)    AddMonitorOverlay(result.addMonitor);
             if (result.removeMonitor) {
@@ -1953,7 +2104,28 @@ void App::Tick() {
     if (m_streamCurrentFrame)
         streamTex = m_streamCapture.GetFrameTexture(m_streamCurrentFrame);
 
+    // The menu in the stream, if asked for: the UI layer covers the overlay
+    // window; the stream shows its source's area of the screen.
+    if (m_streamOpen) {
+        RECT uiRect = {}, srcRect = {};
+        GetWindowRect(m_outputHwnd, &uiRect);
+        if (m_streamSourceHwnd && IsWindow(m_streamSourceHwnd)) {
+            if (FAILED(DwmGetWindowAttribute(m_streamSourceHwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &srcRect, sizeof(srcRect))))
+                GetWindowRect(m_streamSourceHwnd, &srcRect);
+        } else if (m_streamSourceMon) {
+            MONITORINFO mi = {};
+            mi.cbSize = sizeof(mi);
+            if (GetMonitorInfoW(m_streamSourceMon, &mi)) srcRect = mi.rcMonitor;
+        }
+        m_renderer.SetStreamUI(m_settings.streamShowMenu && m_settings.menuVisible, uiRect, srcRect);
+    }
+
     m_renderer.RenderFrame(tex, m_settings, streamTex, imguiDrawData);
+
+    if (m_pendingDrawingSave) {
+        m_pendingDrawingSave = false;
+        SaveDrawing();
+    }
 
     if (const std::optional<bool> shot = m_renderer.PollScreenshot())
         ShowToast(*shot ? "Screenshot saved to Pictures\\SeeRT" : "Couldn't save the screenshot");
@@ -2016,8 +2188,13 @@ void App::BeginImGuiFrame() {
         case 8:  ApplyTeletextStyle();    break;
         case 9:  ApplyVectorStyle();      break;
         case 10: ApplyArcadeStyle();      break;
+        case 11: ApplyComputerLabStyle(); break;
+        case 12: ApplyWebStyle();         break;
         default: ApplyCRTOSDStyle();      break;
     }
+    // Links (the GitHub link in Menu & App) take each style's accent colour.
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.Colors[ImGuiCol_TextLink] = style.Colors[ImGuiCol_CheckMark];
 
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame(); // sets io.MousePos from raw GetCursorPos
@@ -2212,6 +2389,8 @@ void App::SetMonitorCaptureTarget(HMONITOR hmon) {
 
 void App::SetStreamCaptureTarget(HWND target) {
     if (!target) return;
+    m_streamSourceHwnd = target;
+    m_streamSourceMon  = nullptr;
     m_streamCurrentFrame = nullptr;
     m_streamCapture.Stop();
     if (!m_streamCapture.StartCapture(target))
@@ -2221,6 +2400,8 @@ void App::SetStreamCaptureTarget(HWND target) {
 
 void App::SetStreamCaptureMonitor(HMONITOR hmon) {
     if (!hmon) return;
+    m_streamSourceHwnd = nullptr;
+    m_streamSourceMon  = hmon;
     m_streamCurrentFrame = nullptr;
     m_streamCapture.Stop();
     if (!m_streamCapture.StartCaptureMonitor(hmon))

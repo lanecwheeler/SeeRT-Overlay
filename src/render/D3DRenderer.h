@@ -66,6 +66,11 @@ public:
 
     bool HasStream() const { return m_streamSwapChain != nullptr; }
 
+    // Puts the UI layer (the settings menu and cursor) into the stream too.
+    // The UI layer covers uiRect on screen and the stream shows srcRect, so
+    // the menu lands where it is over the stream source.  Set every frame.
+    void SetStreamUI(bool enabled, const RECT& uiRect, const RECT& srcRect);
+
     // -----------------------------------------------------------------------
     // Screenshots — the next presented frame, exactly as on screen (CRT
     // effect, UI and cursor included), saved as a PNG.  The overlay is
@@ -74,6 +79,10 @@ public:
     void RequestScreenshot(std::filesystem::path path);
     // Once a requested screenshot has been taken: true if saved, false if not.
     std::optional<bool> PollScreenshot();
+
+    // Renders draw data on white into a w x h image, off screen, and saves
+    // it as a PNG (Computer Lab's drawings).
+    bool SaveDrawData(ImDrawData* drawData, int w, int h, const std::filesystem::path& path);
 
     // Accessors so other systems (e.g. ImGui) can use the same device.
     ID3D11Device*        GetDevice()  const { return m_device; }
@@ -138,6 +147,8 @@ private:
     void UpdateConstantBuffer(const CRTSettings& settings);
     void DrawSprite(const Sprite& sprite);
     bool SaveBackBuffer(const std::filesystem::path& path);
+    bool SaveTexturePng(ID3D11Texture2D* tex, const std::filesystem::path& path);   // BGRA8
+    void BlitStreamUI(int w, int h);
 
     std::filesystem::path m_screenshotPath;
     bool                  m_screenshotPending = false;
@@ -176,6 +187,12 @@ private:
     ComPtr<ID3D11RenderTargetView>     m_streamRtv;
     int m_streamWidth  = 1280;
     int m_streamHeight = 720;
+
+    // The UI layer remapped onto the stream source, when the menu goes in the stream.
+    RenderTarget m_streamUI;
+    bool         m_streamUIEnabled = false;
+    RECT         m_streamUIRect    = {};   // the UI layer's area on screen
+    RECT         m_streamSrcRect   = {};   // the stream source's area on screen
 
     ComPtr<ID3D11VertexShader>         m_vs;
     ComPtr<ID3D11VertexShader>         m_spriteVS; // positioned quad for cursor

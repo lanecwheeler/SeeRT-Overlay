@@ -137,6 +137,7 @@ target_link_libraries(SeeRTOverlay PRIVATE
     Shlwapi
     Shell32
     winhttp      # update check
+    dwmapi       # the stream source window's bounds
 )
 
 # ---------------------------------------------------------------------------
@@ -249,6 +250,9 @@ add_custom_command(TARGET SeeRTOverlay POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/src/render/assets/PressStart2P-Regular.ttf"
         "$<TARGET_FILE_DIR:SeeRTOverlay>/PressStart2P-Regular.ttf"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/render/assets/ShortStack-Regular.ttf"
+        "$<TARGET_FILE_DIR:SeeRTOverlay>/ShortStack-Regular.ttf"
     COMMENT "Copying font assets"
 )
 

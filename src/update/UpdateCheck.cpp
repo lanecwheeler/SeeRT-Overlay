@@ -15,6 +15,7 @@ namespace {
 
 constexpr wchar_t kApiHost[]      = L"api.github.com";
 constexpr wchar_t kLatestPath[]   = L"/repos/lanecwheeler/SeeRT-Overlay/releases/latest";
+constexpr wchar_t kProjectPage[]  = L"https://github.com/lanecwheeler/SeeRT-Overlay";
 constexpr wchar_t kReleasesPage[] = L"https://github.com/lanecwheeler/SeeRT-Overlay/releases";
 constexpr char    kReleasesPageA[] = "https://github.com/lanecwheeler/SeeRT-Overlay/releases";
 constexpr char    kReleaseUrlPrefix[] = "https://github.com/lanecwheeler/SeeRT-Overlay/releases/";
@@ -103,6 +104,7 @@ std::vector<int> ParseVersion(const std::string& s) {
 } // namespace
 
 const char*    CurrentVersion()  { return SEERT_VERSION; }
+const wchar_t* ProjectPageUrl()  { return kProjectPage; }
 const wchar_t* ReleasesPageUrl() { return kReleasesPage; }
 
 bool IsNewer(const std::string& a, const std::string& b) {

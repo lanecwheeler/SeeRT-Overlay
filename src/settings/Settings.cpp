@@ -177,6 +177,30 @@ CRTSettings Load(const fs::path& path) {
             s.checkForUpdates = j["checkForUpdates"].get<bool>();
         if (j.contains("lastNotifiedUpdate") && j["lastNotifiedUpdate"].is_string())
             s.lastNotifiedUpdate = j["lastNotifiedUpdate"].get<std::string>();
+        if (j.contains("adv64RedCoins") && j["adv64RedCoins"].is_number_integer())
+            s.adv64RedCoins = j["adv64RedCoins"].get<int>();
+        if (j.contains("adv64Gold") && j["adv64Gold"].is_boolean())
+            s.adv64Gold = j["adv64Gold"].get<bool>();
+        if (j.contains("vectorHighScore") && j["vectorHighScore"].is_number_integer())
+            s.vectorHighScore = j["vectorHighScore"].get<int>();
+        if (j.contains("vectorHighName") && j["vectorHighName"].is_string())
+            s.vectorHighName = j["vectorHighName"].get<std::string>().substr(0, 3);
+        if (j.contains("arcadeHighScore") && j["arcadeHighScore"].is_number_integer())
+            s.arcadeHighScore = j["arcadeHighScore"].get<int>();
+        if (j.contains("streamShowMenu") && j["streamShowMenu"].is_boolean())
+            s.streamShowMenu = j["streamShowMenu"].get<bool>();
+        if (j.contains("webHits") && j["webHits"].is_number_integer())
+            s.webHits = j["webHits"].get<int>();
+        if (j.contains("guestbook") && j["guestbook"].is_array()) {
+            for (const auto& e : j["guestbook"]) {
+                if (!e.is_object()) continue;
+                GuestbookEntry g;
+                if (e.contains("name")    && e["name"].is_string())    g.name    = e["name"].get<std::string>();
+                if (e.contains("message") && e["message"].is_string()) g.message = e["message"].get<std::string>();
+                if (e.contains("date")    && e["date"].is_string())    g.date    = e["date"].get<std::string>();
+                if (!g.name.empty() || !g.message.empty()) s.guestbook.push_back(std::move(g));
+            }
+        }
     } catch (...) {
         // Malformed file — silently return defaults.
     }
@@ -210,6 +234,16 @@ void Save(const fs::path& path, const CRTSettings& s) {
     j["menuHeight"]           = s.menuHeight;
     j["checkForUpdates"]      = s.checkForUpdates;
     j["lastNotifiedUpdate"]   = s.lastNotifiedUpdate;
+    j["adv64RedCoins"]        = s.adv64RedCoins;
+    j["adv64Gold"]            = s.adv64Gold;
+    j["vectorHighScore"]      = s.vectorHighScore;
+    j["vectorHighName"]       = s.vectorHighName;
+    j["arcadeHighScore"]      = s.arcadeHighScore;
+    j["streamShowMenu"]       = s.streamShowMenu;
+    j["webHits"]              = s.webHits;
+    j["guestbook"]            = json::array();
+    for (const GuestbookEntry& g : s.guestbook)
+        j["guestbook"].push_back({ { "name", g.name }, { "message", g.message }, { "date", g.date } });
 
     f << j.dump(4);
 }

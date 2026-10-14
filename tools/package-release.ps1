@@ -40,7 +40,7 @@ $appFiles = @(Get-Item (Join-Path $bin 'SeeRTOverlay.exe'), (Join-Path $bin 'cur
 if (-not ($appFiles | Where-Object Extension -eq '.cso')) { throw "No compiled shaders (.cso) in $bin" }
 $appFiles | Copy-Item -Destination $stage
 
-# Licences: the app's, and each bundled font's.
+# Licences: the app's, and each bundled font's and icon's.
 Copy-Item (Join-Path $root 'LICENSE.txt') $stage
 Get-ChildItem (Join-Path $root 'src\render\assets') -Include '*-OFL.txt', '*-LICENSE.txt' -File -Recurse |
     Copy-Item -Destination (Join-Path $stage 'licenses')
