@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 # The app version — also tag the GitHub release vX.Y.Z to match, since the
 # in-app update check compares this against the latest release's tag.
-project(SeeRTOverlay VERSION 1.1.0 LANGUAGES CXX)
+project(SeeRTOverlay VERSION 1.2.0 LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------
 # Standards

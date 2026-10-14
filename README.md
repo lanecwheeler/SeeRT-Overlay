@@ -67,9 +67,11 @@ on youtube for the gameplay I got my screenshots from!)
 - System tray icon
 - Screenshots of the overlay as you see it (Ctrl+Shift+PrtScn or the tray menu) saved to Pictures\SeeRT — normal screen capture tools can't see the overlay
 - Update check: on launch it asks GitHub whether a newer release exists and, if so, shows a notification and a Download Update item in the tray menu. Turn it off (or check by hand) under Updates in the tray menu.
+- Stream window for OBS and other capture software, optionally with the settings menu shown in it too
+- Only one copy runs at a time — starting it again just opens the running copy's settings
 
 **Settings**
-- ImGui settings panel with multiple UI themes
+- Twelve settings menu styles: Teletext, 64 Adventure, Sword & Sorcery, Vector Monitor, Arcade Service, Computer Lab, Web 1.0, CRT OSD, Camcorder, VCR, DOS Terminal and Simple — the game-style ones each hide a secret or two
 - 11 built-in presets + save/load/reorder user presets
 - Settings persist to `%APPDATA%\SeeRT Overlay\settings.json`
 - Audio loopback capture (optional)
