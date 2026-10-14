@@ -33,6 +33,10 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 // ---------------------------------------------------------------------------
 static App* g_app = nullptr;
 
+// Posted to the running copy when the app is started a second time: it opens
+// its settings panel, so the user can see it's already running.
+constexpr UINT WM_SHOW_RUNNING = WM_APP + 102;
+
 // ---------------------------------------------------------------------------
 // StreamWndProc — message handler for the optional stream output window.
 // ---------------------------------------------------------------------------
@@ -126,6 +130,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
     case UpdateCheck::WM_UPDATE_CHECKED:
         if (g_app) g_app->OnUpdateChecked();
+        return 0;
+
+    case WM_SHOW_RUNNING:
+        if (g_app && !g_app->IsMenuOpen()) g_app->ToggleMenu();
         return 0;
 
     case WM_SIZE:
@@ -251,6 +259,21 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int /*nCmdShow*/) {
     SetUnhandledExceptionFilter(CrashFilter);
     std::set_terminate(CrashTerminate);
     winrt::init_apartment();
+
+    // One copy at a time, wherever it was started from.  A second copy hands
+    // over to the first — showing its settings panel — and exits.  (The mutex
+    // is released when this process ends, however it ends.)
+    HANDLE instanceMutex = CreateMutexW(nullptr, FALSE, L"Local\\SeeRTOverlay.SingleInstance");
+    if (instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (HWND running = FindWindowW(L"SeeRTOverlay_Output", nullptr)) {
+            DWORD pid = 0;
+            GetWindowThreadProcessId(running, &pid);
+            AllowSetForegroundWindow(pid);   // let it take the foreground to open its panel
+            PostMessageW(running, WM_SHOW_RUNNING, 0, 0);
+        }
+        CloseHandle(instanceMutex);
+        return 0;
+    }
 
     RegisterWindowClasses(hInstance);
 
