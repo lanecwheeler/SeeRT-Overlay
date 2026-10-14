@@ -57,6 +57,7 @@ public:
     void OnUpdateChecked();
     void OnUpdateReady();     // Updater::WM_UPDATE_READY
     void AnnounceUpdated();   // first launch after an update
+    void ShowWhatsNewIfUpdated();   // at launch: patch notes, once per new version
 
     // Saves the next frame of the main overlay — exactly as on screen, settings
     // menu and cursor included — to Pictures\SeeRT, and shows a toast.

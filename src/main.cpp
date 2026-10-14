@@ -327,7 +327,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR cmdLine, int /*nCmdShow
         return 1;
     }
 
-    if (updated) app.AnnounceUpdated();
+    app.ShowWhatsNewIfUpdated();   // patch notes, the first time a new version runs
 
     MSG msg = {};
     while (true) {

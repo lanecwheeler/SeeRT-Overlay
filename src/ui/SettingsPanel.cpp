@@ -3,6 +3,8 @@
 #include "StyleFonts.h"
 #include "../update/UpdateCheck.h"
 #include "../update/Updater.h"
+#include "patchnotes.h"
+#include <sstream>
 #include <imgui.h>
 #include <algorithm> // std::clamp
 #include <cfloat>    // FLT_MAX
@@ -97,6 +99,7 @@ static constexpr float kScreenMargin = 20.f;
 // dialog itself is drawn once a frame by SettingsPanel::Draw (DrawQuitConfirm).
 static bool s_quitRequested = false;
 static bool s_saveDrawingRequested = false;   // Computer Lab's Save button
+static bool s_patchNotesRequested  = false;   // open the patch notes window
 static void RequestQuit() { s_quitRequested = true; }
 
 // A fixed layout length (padding, sidebar width, font size, ...) at the menu scale.
@@ -613,6 +616,8 @@ static void DrawAppInfo(CRTSettings& s, SettingsPanel::DrawResult& result, bool 
     ImGui::Checkbox("Update automatically##update", &s.autoUpdate);
     Tip("Downloads new versions in the background and installs them the next time\n"
         "the app restarts or quits.  Your settings and presets are kept.");
+    if (ImGui::Button("Patch notes##update")) s_patchNotesRequested = true;
+    Tip("What's changed in each version.");
 
     if (githubLink) {
         // The address if it fits on one line (wide pixel fonts may not), else a short name.
@@ -5647,6 +5652,61 @@ static ImFont* MenuFont(int styleId) {
     }
 }
 
+// The patch notes (CHANGELOG.md, compiled in), in the current menu style's
+// colours and font.  "## " lines are version headings, "- " lines bullets.
+static void DrawPatchNotes(int styleId) {
+    static constexpr const char* kPopupId = "##patchnotes";
+    if (s_patchNotesRequested) {
+        ImGui::OpenPopup(kPopupId);
+        s_patchNotesRequested = false;
+    }
+
+    ImFont* font = MenuFont(styleId);
+    if (font) ImGui::PushFont(font, font->LegacySize);
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(std::min(Sc(560.f), display.x - 40.f), std::min(Sc(480.f), display.y - 40.f)),
+                             ImGuiCond_Always);
+    if (ImGui::BeginPopupModal(kPopupId, nullptr,
+                               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove |
+                               ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        const ImVec4 accent = ImGui::GetStyle().Colors[ImGuiCol_CheckMark];
+        ImGui::PushFont(nullptr, ImGui::GetFontSize() * 1.3f);
+        ImGui::TextColored(accent, "What's new in SeeRT Overlay");
+        ImGui::PopFont();
+        ImGui::Separator();
+
+        const float closeH = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+        ImGui::BeginChild("##notes", ImVec2(0.f, -closeH), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+        std::istringstream in(kPatchNotes);
+        std::string line;
+        while (std::getline(in, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty() || line.rfind("# ", 0) == 0) continue;   // blank, or the file's title
+            if (line.rfind("## ", 0) == 0) {
+                ImGui::Spacing();
+                ImGui::PushFont(nullptr, ImGui::GetFontSize() * 1.15f);
+                const bool current = line.compare(3, std::string::npos, UpdateCheck::CurrentVersion()) == 0;
+                ImGui::TextColored(accent, "Version %s%s", line.c_str() + 3, current ? "  (you have this one)" : "");
+                ImGui::PopFont();
+            } else if (line.rfind("- ", 0) == 0) {
+                ImGui::Bullet();
+                ImGui::TextWrapped("%s", line.c_str() + 2);
+            } else {
+                ImGui::TextWrapped("%s", line.c_str());
+            }
+        }
+        ImGui::EndChild();
+
+        if (ImGui::Button("Close", ImVec2(Sc(120.f), 0.f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    if (font) ImGui::PopFont();
+}
+
+void SettingsPanel::ShowPatchNotes() { s_patchNotesRequested = true; }
+
 static void DrawQuitConfirm(int styleId) {
     static constexpr const char* kPopupId = "##quitconfirm";
     if (s_quitRequested) {
@@ -5762,6 +5822,7 @@ SettingsPanel::DrawResult SettingsPanel::Draw(CRTSettings& s,
         default: result = DrawOSD       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
     }
     DrawQuitConfirm(s.menuStyle);
+    DrawPatchNotes(s.menuStyle);
     result.saveDrawing = s_saveDrawingRequested;
     s_saveDrawingRequested = false;
 

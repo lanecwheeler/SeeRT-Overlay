@@ -109,6 +109,7 @@ struct CRTSettings {
     bool  checkForUpdates   = true;
     bool  autoUpdate        = true;   // download a newer release and install it on the next restart
     std::string lastNotifiedUpdate;
+    std::string lastRunVersion;      // to show the patch notes once after an update
 
     // Easter eggs in the game-style menus — progress and high scores, kept
     // between launches (and, like the rest of the menu state, not in presets).

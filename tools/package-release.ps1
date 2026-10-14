@@ -52,7 +52,17 @@ Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip
 $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
 Set-Content -Path "$zip.sha256" -Value "$hash  $name.zip" -Encoding ascii
 
-$notes = @"
+# This version's section of CHANGELOG.md goes at the top of the notes.
+$changes = ''
+$changelog = Join-Path $root 'CHANGELOG.md'
+if (Test-Path $changelog) {
+    $text    = Get-Content $changelog -Raw -Encoding utf8
+    $pattern = '(?ms)^## ' + [regex]::Escape($version) + '[ \t]*\r?\n(.*?)(?=^## |\z)'
+    $section = [regex]::Match($text, $pattern)
+    if ($section.Success) { $changes = "## What's new`n`n" + $section.Groups[1].Value.Trim() + "`n`n" }
+}
+
+$notes = $changes + @"
 SeeRT Overlay v$version for Windows 10 and 11 (64-bit).
 
 Download **$name.zip**, unzip it anywhere and run ``SeeRTOverlay.exe``. Settings and presets live in ``%APPDATA%\SeeRT Overlay``, so they carry over from earlier versions.

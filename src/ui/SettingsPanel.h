@@ -71,6 +71,8 @@ public:
     // on the canvas (0 x 0 when there's nothing drawn), and the drawing itself
     // into dl, top-left at (0, 0).  The background is left to the caller.
     static ImVec2 DrawingSize(float scale);
+    // Opens the patch notes window the next time the menu draws.
+    static void   ShowPatchNotes();
     static void   DrawDrawing(ImDrawList* dl, float scale);
 
     DrawResult Draw(CRTSettings& settings,

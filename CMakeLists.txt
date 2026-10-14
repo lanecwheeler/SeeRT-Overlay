@@ -62,6 +62,10 @@ add_executable(SeeRTOverlay WIN32 ${SOURCES})
 
 # version.h — the project version for the code and the exe's version resource.
 configure_file(src/version.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/version.h" @ONLY)
+# The patch notes shown in the app are CHANGELOG.md, compiled in.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/CHANGELOG.md" PATCH_NOTES)
+configure_file(src/patchnotes.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/patchnotes.h" @ONLY)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/CHANGELOG.md")
 target_include_directories(SeeRTOverlay PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # ---------------------------------------------------------------------------

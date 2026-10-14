@@ -179,6 +179,8 @@ CRTSettings Load(const fs::path& path) {
             s.autoUpdate = j["autoUpdate"].get<bool>();
         if (j.contains("lastNotifiedUpdate") && j["lastNotifiedUpdate"].is_string())
             s.lastNotifiedUpdate = j["lastNotifiedUpdate"].get<std::string>();
+        if (j.contains("lastRunVersion") && j["lastRunVersion"].is_string())
+            s.lastRunVersion = j["lastRunVersion"].get<std::string>();
         if (j.contains("adv64RedCoins") && j["adv64RedCoins"].is_number_integer())
             s.adv64RedCoins = j["adv64RedCoins"].get<int>();
         if (j.contains("adv64Gold") && j["adv64Gold"].is_boolean())
@@ -237,6 +239,7 @@ void Save(const fs::path& path, const CRTSettings& s) {
     j["checkForUpdates"]      = s.checkForUpdates;
     j["autoUpdate"]           = s.autoUpdate;
     j["lastNotifiedUpdate"]   = s.lastNotifiedUpdate;
+    j["lastRunVersion"]       = s.lastRunVersion;
     j["adv64RedCoins"]        = s.adv64RedCoins;
     j["adv64Gold"]            = s.adv64Gold;
     j["vectorHighScore"]      = s.vectorHighScore;

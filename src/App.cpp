@@ -1384,6 +1384,24 @@ void App::AnnounceUpdated() {
     ShowToast(std::string("Updated to SeeRT Overlay v") + UpdateCheck::CurrentVersion());
 }
 
+// The first time a newer version runs — however it was installed — open the
+// menu on its patch notes.  Settings from before 1.4 don't record the last
+// version run; there, the update we announced being this version counts.
+void App::ShowWhatsNewIfUpdated() {
+    const std::string current = UpdateCheck::CurrentVersion();
+    const std::string& last   = m_settings.lastRunVersion;
+    const bool updated = last.empty() ? m_settings.lastNotifiedUpdate == current
+                                      : UpdateCheck::IsNewer(current, last);
+    if (last != current) {
+        m_settings.lastRunVersion = current;
+        Settings::Save(m_settingsPath, m_settings);
+    }
+    if (!updated) return;
+    AnnounceUpdated();
+    if (!m_settings.menuVisible) ToggleMenu();
+    SettingsPanel::ShowPatchNotes();
+}
+
 // Opens the new release's GitHub page (or the releases list) in the browser.
 void App::OpenUpdatePage() {
     std::string page = m_updateUrl;
