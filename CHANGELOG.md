@@ -1,5 +1,10 @@
 # SeeRT Overlay patch notes
 
+## 1.5.0
+- Degauss: the button in Menu & App (or the CRT OSD footer) shakes the picture and swirls colour through it, like a real tube, with the coil's hum. Untick Sound to keep it quiet.
+- Something magnetic is peeking in from the edge of the screen. Careful with that near the TV...
+- Tooltips now draw over the cursor instead of under it.
+
 ## 1.4.0
 - Patch notes: open them from Menu & App, and they show up by themselves the first time a new version runs.
 - Updates ask before installing: once a new version has downloaded, you choose when to restart and install it. (Turn on Install updates without asking to have it install when you quit.)
