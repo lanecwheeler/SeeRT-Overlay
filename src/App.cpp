@@ -2,7 +2,9 @@
 #include "App.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>   // BringWindowToDisplayFront (the cursor layer)
 #include "ui/StyleFonts.h"
+#include "ui/Degauss.h"
 #include "update/UpdateCheck.h"
 #include "update/Updater.h"
 #include <imgui_impl_win32.h>
@@ -1871,6 +1873,11 @@ void App::Tick() {
         m_settings.time       = now;
     }
 
+    // The fridge magnet's stains and the Degauss button's wobble.
+    Degauss::Update(m_settings.frameDelta);
+    m_settings.degauss     = Degauss::Amount();
+    m_settings.degaussTime = Degauss::Time();
+
     {
         auto f = m_capture.TryGetFrame();
         if (f) m_currentFrame = std::move(f);
@@ -2182,6 +2189,21 @@ void App::Tick() {
                              || m_cursorShowTimer > 0.f;
         if (showCursor)
         {
+            // Drawn in a click-through window kept in front of the menus and
+            // popups rather than on the foreground list, so tooltips (ImGui
+            // draws them after every other window) land on top of the cursor
+            // instead of under it.
+            const ImVec2 disp = ImGui::GetIO().DisplaySize;
+            ImGui::SetNextWindowPos(ImVec2(0.f, 0.f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(disp, ImGuiCond_Always);
+            ImGui::Begin("##cursorlayer", nullptr,
+                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                         ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings |
+                         ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+            ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+            ImDrawList* cursorDL = ImGui::GetWindowDrawList();
+            cursorDL->PushClipRectFullScreen();
+
             const auto& cs = m_settings;
             auto toU32 = [](float r, float g, float b) -> ImU32 {
                 return IM_COL32(
@@ -2192,7 +2214,7 @@ void App::Tick() {
             };
             const bool useImage = m_cursorSRV && !cs.cursorPlain;
             DrawVirtualCursor(
-                ImGui::GetForegroundDrawList(),
+                cursorDL,
                 ImVec2(m_rawCursorX, m_rawCursorY),   // raw position → barrel-distorted by CRT
                 (ImTextureID)(useImage ? (void*)m_cursorSRV.Get() : nullptr),
                 m_cursorTexW, m_cursorTexH,
@@ -2205,11 +2227,13 @@ void App::Tick() {
             // Click-point marker, centred on the exact hotspot.
             if (cs.cursorShowHotspot && m_hotspotMarkerSRV) {
                 constexpr float h = kHotspotMarkerSize * 0.5f;
-                ImGui::GetForegroundDrawList()->AddImage(
+                cursorDL->AddImage(
                     (ImTextureID)(void*)m_hotspotMarkerSRV.Get(),
                     ImVec2(m_rawCursorX - h, m_rawCursorY - h),
                     ImVec2(m_rawCursorX + h, m_rawCursorY + h));
             }
+            cursorDL->PopClipRect();
+            ImGui::End();
         }
 
         DrawToast();
@@ -2245,6 +2269,8 @@ void App::Tick() {
         m_renderer.SetStreamUI(m_settings.streamShowMenu && m_settings.menuVisible, uiRect, srcRect);
     }
 
+    m_renderer.SetMagnetField(Degauss::Magnetised() ? Degauss::Field() : nullptr,
+                              Degauss::kFieldW, Degauss::kFieldH, Degauss::Version());
     m_renderer.RenderFrame(tex, m_settings, streamTex, imguiDrawData);
 
     if (m_pendingDrawingSave) {

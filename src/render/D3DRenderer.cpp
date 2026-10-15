@@ -569,7 +569,8 @@ void D3DRenderer::RenderFrame(ID3D11Texture2D* capturedTex, const CRTSettings& s
     const PostResult post = RunPostChain(m_mainPost, m_intermediateSRV.Get(),
                                          m_width, m_height, settings);
     m_context->ClearRenderTargetView(m_rtv.Get(), black);
-    CRTPass(m_rtv.Get(), m_width, m_height, post, m_uiSRV.Get());
+    CRTPass(m_rtv.Get(), m_width, m_height, post, m_uiSRV.Get(),
+            m_magnetActive ? m_magnetSRV.Get() : nullptr);
 
     // Grab the finished frame before Present hands the buffer to the compositor.
     if (m_screenshotPending) {
@@ -726,7 +727,8 @@ bool D3DRenderer::SaveTexturePng(ID3D11Texture2D* source, const std::filesystem:
 // layer (t1, may be null) and the glow / halation results (t2, t3).
 // ---------------------------------------------------------------------------
 void D3DRenderer::CRTPass(ID3D11RenderTargetView* rtv, int w, int h,
-                          const PostResult& post, ID3D11ShaderResourceView* ui) {
+                          const PostResult& post, ID3D11ShaderResourceView* ui,
+                          ID3D11ShaderResourceView* magnet) {
     D3D11_VIEWPORT vp = {};
     vp.Width    = static_cast<float>(w);
     vp.Height   = static_cast<float>(h);
@@ -742,13 +744,49 @@ void D3DRenderer::CRTPass(ID3D11RenderTargetView* rtv, int w, int h,
     ID3D11SamplerState* samp = m_sampler.Get();
     m_context->PSSetSamplers(0, 1, &samp);
 
-    ID3D11ShaderResourceView* srvs[5] = { post.picture, ui, post.glow, post.halo, post.avgLum };
-    m_context->PSSetShaderResources(0, 5, srvs);
+    ID3D11ShaderResourceView* srvs[7] = { post.picture, ui, post.glow, post.halo, post.avgLum,
+                                          nullptr, magnet };
+    m_context->PSSetShaderResources(0, 7, srvs);
     m_context->Draw(3, 0);
 
-    ID3D11ShaderResourceView* nullSrvs[5] = {};
-    m_context->PSSetShaderResources(0, 5, nullSrvs);
+    ID3D11ShaderResourceView* nullSrvs[7] = {};
+    m_context->PSSetShaderResources(0, 7, nullSrvs);
     m_context->OMSetRenderTargets(0, nullptr, nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// SetMagnetField — upload the magnetisation grid when it has changed.
+// ---------------------------------------------------------------------------
+void D3DRenderer::SetMagnetField(const float* rg, int w, int h, uint64_t version) {
+    if (!rg) { m_magnetActive = false; return; }
+    m_magnetActive = true;
+    if (version == m_magnetVersion && m_magnetTex) return;
+
+    D3D11_TEXTURE2D_DESC have = {};
+    if (m_magnetTex) m_magnetTex->GetDesc(&have);
+    if (!m_magnetTex || static_cast<int>(have.Width) != w || static_cast<int>(have.Height) != h) {
+        m_magnetTex.Reset();
+        m_magnetSRV.Reset();
+        D3D11_TEXTURE2D_DESC desc = {};
+        desc.Width            = static_cast<UINT>(w);
+        desc.Height           = static_cast<UINT>(h);
+        desc.MipLevels        = 1;
+        desc.ArraySize        = 1;
+        desc.Format           = DXGI_FORMAT_R32G32_FLOAT;
+        desc.SampleDesc.Count = 1;
+        desc.Usage            = D3D11_USAGE_DEFAULT;
+        desc.BindFlags        = D3D11_BIND_SHADER_RESOURCE;
+        if (FAILED(m_device->CreateTexture2D(&desc, nullptr, &m_magnetTex)) ||
+            FAILED(m_device->CreateShaderResourceView(m_magnetTex.Get(), nullptr, &m_magnetSRV))) {
+            m_magnetTex.Reset();
+            m_magnetSRV.Reset();
+            m_magnetActive = false;
+            return;
+        }
+    }
+    m_context->UpdateSubresource(m_magnetTex.Get(), 0, nullptr, rg,
+                                 static_cast<UINT>(w) * 2 * sizeof(float), 0);
+    m_magnetVersion = version;
 }
 
 // ---------------------------------------------------------------------------

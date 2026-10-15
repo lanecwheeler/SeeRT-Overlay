@@ -5,6 +5,7 @@
 #include <wrl/client.h>   // Microsoft::WRL::ComPtr
 #include "../settings/Settings.h"
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 
@@ -70,6 +71,10 @@ public:
     // The UI layer covers uiRect on screen and the stream shows srcRect, so
     // the menu lands where it is over the stream source.  Set every frame.
     void SetStreamUI(bool enabled, const RECT& uiRect, const RECT& srcRect);
+
+    // The tube's magnetisation (CRT OSD's fridge magnet): w x h RG pairs over
+    // the picture.  Uploaded only when version changes; null clears it.
+    void SetMagnetField(const float* rg, int w, int h, uint64_t version);
 
     // -----------------------------------------------------------------------
     // Screenshots — the next presented frame, exactly as on screen (CRT
@@ -143,7 +148,7 @@ private:
     void BlurPass(const RenderTarget& src, const RenderTarget& dst,
                   bool horizontal, float sigmaTexels);
     void CRTPass(ID3D11RenderTargetView* rtv, int w, int h, const PostResult& post,
-                 ID3D11ShaderResourceView* ui);
+                 ID3D11ShaderResourceView* ui, ID3D11ShaderResourceView* magnet = nullptr);
     void UpdateConstantBuffer(const CRTSettings& settings);
     void DrawSprite(const Sprite& sprite);
     bool SaveBackBuffer(const std::filesystem::path& path);
@@ -193,6 +198,12 @@ private:
     bool         m_streamUIEnabled = false;
     RECT         m_streamUIRect    = {};   // the UI layer's area on screen
     RECT         m_streamSrcRect   = {};   // the stream source's area on screen
+
+    // The magnetisation grid (t6) — main picture only.
+    ComPtr<ID3D11Texture2D>            m_magnetTex;
+    ComPtr<ID3D11ShaderResourceView>   m_magnetSRV;
+    uint64_t                           m_magnetVersion = 0;
+    bool                               m_magnetActive  = false;
 
     ComPtr<ID3D11VertexShader>         m_vs;
     ComPtr<ID3D11VertexShader>         m_spriteVS; // positioned quad for cursor

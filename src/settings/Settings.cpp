@@ -195,6 +195,8 @@ CRTSettings Load(const fs::path& path) {
             s.arcadeHighScore = j["arcadeHighScore"].get<int>();
         if (j.contains("streamShowMenu") && j["streamShowMenu"].is_boolean())
             s.streamShowMenu = j["streamShowMenu"].get<bool>();
+        if (j.contains("degaussSound") && j["degaussSound"].is_boolean())
+            s.degaussSound = j["degaussSound"].get<bool>();
         if (j.contains("webHits") && j["webHits"].is_number_integer())
             s.webHits = j["webHits"].get<int>();
         if (j.contains("guestbook") && j["guestbook"].is_array()) {
@@ -249,6 +251,7 @@ void Save(const fs::path& path, const CRTSettings& s) {
     j["vectorHighName"]       = s.vectorHighName;
     j["arcadeHighScore"]      = s.arcadeHighScore;
     j["streamShowMenu"]       = s.streamShowMenu;
+    j["degaussSound"]         = s.degaussSound;
     j["webHits"]              = s.webHits;
     j["guestbook"]            = json::array();
     for (const GuestbookEntry& g : s.guestbook)

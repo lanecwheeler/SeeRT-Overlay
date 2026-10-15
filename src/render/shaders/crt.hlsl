@@ -81,8 +81,8 @@ cbuffer CRTParams : register(b0) {
 
     float rasterBloom;        // 0–1  picture grows with scene brightness
     float frameDelta;         // seconds since the previous frame
-    float shaderPad0;
-    float shaderPad1;
+    float degauss;            // 0–1  degauss wobble and colour swirl, dying away
+    float degaussTime;        // seconds since the degauss started
 };
 
 // ---------------------------------------------------------------------------
@@ -97,6 +97,8 @@ cbuffer CRTParams : register(b0) {
 //   t4 — 1×1 smoothed average scene luminance (raster bloom).  Zero when off.
 //   t5 — previous frame's history, read by the persistence / luminance
 //        pre-passes only.
+//   t6 — the tube's magnetisation (CRT OSD's fridge magnet): RG = a vector
+//        per cell of a small grid over the picture.  Zero when unbound.
 // ---------------------------------------------------------------------------
 Texture2D    gCaptureTexture : register(t0);
 Texture2D    gUITexture      : register(t1);
@@ -104,6 +106,7 @@ Texture2D    gGlowTexture    : register(t2);
 Texture2D    gHaloTexture    : register(t3);
 Texture2D    gAvgLumTexture  : register(t4);
 Texture2D    gHistoryTexture : register(t5);
+Texture2D    gMagnetTexture  : register(t6);
 SamplerState gLinearClamp    : register(s0);
 
 // Size of the luminance-averaging buffer (its last mip is 1×1).  Must match
@@ -578,6 +581,44 @@ float TVStatic(float2 screenPos) {
 }
 
 // ---------------------------------------------------------------------------
+// Degauss — the coil's decaying AC field shakes the beams, so the picture
+// wobbles and shimmers while it dies away.
+// ---------------------------------------------------------------------------
+float2 DegaussWobble(float2 uv) {
+    if (degauss < 0.001) return uv;
+    float t = degaussTime;
+    float w = degauss * 0.012;
+    uv.x += w * (sin(uv.y * 23.0 + t * 71.0) + 0.6 * sin(t * 53.0));
+    uv.y += w * (0.6 * sin(uv.x * 17.0 - t * 59.0) + 0.5 * cos(t * 47.0));
+    return uv;
+}
+
+// ---------------------------------------------------------------------------
+// Colour purity — a magnetised mask (or the degauss coil's field) bends the
+// beams onto the wrong phosphors, staining the picture with colour.  p is a
+// vector: its direction picks the hue, its length how far the beams land
+// off.  The stain keeps each pixel's light, just moves it into that hue.
+// ---------------------------------------------------------------------------
+float3 Hue(float h) {
+    return saturate(abs(frac(h + float3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0);
+}
+
+float3 Purity(float3 col, float2 uv) {
+    float2 p = gMagnetTexture.SampleLevel(gLinearClamp, uv, 0).rg;
+    if (degauss > 0.001) {
+        // The coil's swirl: colour wheeling round the screen, strongest at the edges.
+        float2 c = uv - 0.5;
+        float  a = atan2(c.y, c.x) * 2.0 + length(c) * 14.0 - degaussTime * 9.0;
+        p += float2(cos(a), sin(a)) * degauss * (0.3 + 0.8 * saturate(length(c) * 1.6));
+    }
+    float amount = saturate(length(p));
+    if (amount < 0.002) return col;
+    float3 tint   = Hue(atan2(p.y, p.x) / 6.28318530 + 0.5);
+    float3 moved  = tint * (col.r + col.g + col.b) / (tint.r + tint.g + tint.b);
+    return lerp(col, moved, amount * 0.85);
+}
+
+// ---------------------------------------------------------------------------
 // Blit pixel shader — pass-through, used in pass 1 to copy the capture.
 // ---------------------------------------------------------------------------
 float4 PS_Blit(VS_Output input) : SV_TARGET {
@@ -614,13 +655,13 @@ VS_Output VS_Sprite(uint id : SV_VertexID) {
 // ---------------------------------------------------------------------------
 // Main CRT pixel shader
 // Pipeline (linear light between decode and re-encode):
-//   distort → corner mask → beam scanlines (decode + grade per line, UI
-//   composited) → + glow/halation → phosphor mask → hum → vignette →
-//   flicker → re-encode → static
+//   distort (+ degauss wobble) → corner mask → beam scanlines (decode +
+//   grade per line, UI composited) → + glow/halation → colour purity →
+//   phosphor mask → hum → vignette → flicker → re-encode → static
 // ---------------------------------------------------------------------------
 float4 PS_Main(VS_Output input) : SV_TARGET {
     // 1. Barrel distortion.
-    float2 uv = BarrelDistort(input.uv);
+    float2 uv = DegaussWobble(BarrelDistort(input.uv));
 
     // Screen-space derivatives first, while control flow is still uniform.
     float edgeDist    = CornerDistance(uv);
@@ -645,6 +686,9 @@ float4 PS_Main(VS_Output input) : SV_TARGET {
     if (diffuseStrength > 0.001)
         light += SampleBSpline(gHaloTexture, uv) * diffuseStrength * kHaloGain;
     col += GradeLight(light);
+
+    // 4b. Colour purity — the magnetised mask and the degauss swirl.
+    col = Purity(col, uv);
 
     // 5. Phosphor mask — sub-pixel phosphor geometry.
     col *= ShadowMask(input.pos.xy);

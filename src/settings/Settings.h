@@ -66,8 +66,8 @@ struct CRTSettings {
 
     float rasterBloom         = 0.0f;  // 0–1     picture grows with scene brightness (up to 5%)
     float frameDelta          = 0.0f;  // seconds since the previous frame — written each frame by App
-    float shaderPad0          = 0.0f;  // keeps the constant buffer a multiple of 16 bytes
-    float shaderPad1          = 0.0f;
+    float degauss             = 0.0f;  // 0–1  strength of the degauss wobble now — written each frame by App
+    float degaussTime         = 0.0f;  // seconds since that degauss started — written each frame by App
 
     // UI-only — not uploaded to the GPU constant buffer.
     // 0 = CRT OSD  1 = Simple  3 = Camcorder  4 = DOS Terminal  5 = VCR
@@ -128,6 +128,9 @@ struct CRTSettings {
     // Stream window — also show the settings menu (and cursor, while it's
     // open) in the stream output, so viewers can see the menu.
     bool  streamShowMenu    = false;
+
+    // CRT OSD's Degauss button plays the coil's hum.
+    bool  degaussSound      = true;
 
     // Audio capture — endpoint ID of the render device to loopback-capture.
     // "__none__" = disabled (no audio streamed). "" = Windows default render device.

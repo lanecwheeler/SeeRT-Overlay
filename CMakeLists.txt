@@ -43,6 +43,8 @@ set(SOURCES
     src/ui/MonitorPicker.h
     src/ui/SettingsPanel.cpp
     src/ui/SettingsPanel.h
+    src/ui/Degauss.cpp
+    src/ui/Degauss.h
     src/settings/Settings.cpp
     src/settings/Settings.h
     src/settings/Presets.cpp

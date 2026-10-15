@@ -1,11 +1,13 @@
 #include "SettingsPanel.h"
 #include "../settings/Presets.h"
 #include "StyleFonts.h"
+#include "Degauss.h"
 #include "../update/UpdateCheck.h"
 #include "../update/Updater.h"
 #include "patchnotes.h"
 #include <sstream>
 #include <imgui.h>
+#include <imgui_internal.h>   // BringWindowToDisplayFront (the fridge magnet)
 #include <algorithm> // std::clamp
 #include <cfloat>    // FLT_MAX
 #include <cctype>    // toupper / tolower
@@ -562,6 +564,16 @@ static void DrawMenuSizeControls(CRTSettings& s) {
     Tip("Back to the style's normal size.");
 }
 
+// Menu & App — the Degauss button (CRT OSD has its own in the footer).
+static void DrawDegaussControls(CRTSettings& s) {
+    if (ImGui::Button("Degauss##degauss")) Degauss::Start(s.degaussSound);
+    Tip("Demagnetises the tube, clearing any colour blotches.\n"
+        "Give it a few seconds between goes - the coil needs to cool down.");
+    ImGui::SameLine();
+    ImGui::Checkbox("Sound##degauss", &s.degaussSound);
+    Tip("Play the degaussing coil's hum.");
+}
+
 static constexpr const char* kGitHubTip =
     "Check it out on GitHub! Feel free to report bugs and leave feedback/feature requests as well!";
 
@@ -801,6 +813,124 @@ static void DrawSettingsBody(
 }
 
 // ---------------------------------------------------------------------------
+// The fridge magnet — in every style, just peeking in from the right edge of
+// the screen.  Hover it and it slides out a little; drag it over the picture
+// and it stains the tube with colour, the way a magnet does a real one.  The
+// Degauss button (Menu & App, or CRT OSD's footer) clears it.
+// ---------------------------------------------------------------------------
+static constexpr float kParkAngle = 1.0472f;   // 60 degrees from poles-down: 30 degrees off level
+
+static void DrawFridgeMagnet(const CRTSettings& s) {
+    static bool   s_held  = false;
+    static ImVec2 s_grab;              // the mouse's offset from the magnet's centre
+    static float  s_peek  = 0.f;       // 0 tucked away .. 1 slid out
+    static float  s_angle = kParkAngle;   // tilted, poles toward the screen, while parked; down while held
+
+    ImGuiIO&     io      = ImGui::GetIO();
+    const ImVec2 display = io.DisplaySize;
+    if (display.x <= 0.f || display.y <= 0.f) return;
+    const float  w   = Sc(42.f);
+    const float  h   = w * 1.1f;
+    const float  box = h * 1.5f;       // square hit box around the magnet at any angle
+    const float  dt  = std::min(io.DeltaTime, 0.1f);
+
+    // Parked against the right edge of the visible picture, a little below the
+    // middle.  Curvature and zoom move that edge, so find the menu-space x
+    // that the screen's right edge shows at this height.
+    const float parkY = display.y * 0.62f;
+    float edgeX = display.x;
+    {
+        const float cy = parkY / display.y * 2.f - 1.f;
+        const float r2 = 1.f + cy * cy;
+        const float sx = (1.f + s.curvatureX * r2) / std::max(s.zoom, 0.01f);
+        edgeX = std::min(display.x, (sx * 0.5f + 0.5f) * display.x);
+    }
+    // How far the parked magnet reaches left of its centre, at its tilt.
+    const float pa = std::cos(kParkAngle), pb = std::sin(kParkAngle);
+    float reach = 0.f;
+    for (float x : { -w * 0.5f, w * 0.5f })
+        for (float y : { -h * 0.5f, h * 0.5f }) reach = std::max(reach, -(x * pa - y * pb));
+    const float  visible = Sc(27.f) + s_peek * Sc(14.f);   // how much shows past the edge
+    const ImVec2 park(edgeX - visible + reach, parkY);
+
+    ImVec2 c = s_held ? ImVec2(io.MousePos.x - s_grab.x, io.MousePos.y - s_grab.y) : park;
+
+    // An invisible window with one button over the magnet: the same input
+    // path as every other control, kept in front of the menus.
+    const bool popupOpen = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+    ImGui::SetNextWindowPos(ImVec2(c.x - box * 0.5f, c.y - box * 0.5f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(box, box), ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
+    bool hovered = false;
+    ImDrawList* dl = nullptr;
+    if (ImGui::Begin("##fridgemagnet", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground |
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove)) {
+        if (!popupOpen) ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+        ImGui::InvisibleButton("##magnet", ImVec2(box, box));
+        hovered = ImGui::IsItemHovered();
+        if (ImGui::IsItemActivated()) {
+            s_held = true;
+            s_grab = ImVec2(io.MousePos.x - c.x, io.MousePos.y - c.y);
+        }
+        if (s_held && !ImGui::IsItemActive()) s_held = false;
+        if (hovered && !s_held) ImGui::SetTooltip("Keep magnets away from the TV!");
+        dl = ImGui::GetWindowDrawList();
+    }
+
+    c = s_held ? ImVec2(io.MousePos.x - s_grab.x, io.MousePos.y - s_grab.y) : park;
+    s_peek  += ((hovered || s_held ? 1.f : 0.f) - s_peek) * std::min(1.f, dt * 12.f);
+    s_angle += ((s_held ? 0.f : kParkAngle) - s_angle) * std::min(1.f, dt * 14.f);
+
+    // Local coordinates: centred on the magnet, poles down (+y), then turned.
+    const float ca = std::cos(s_angle), sa = std::sin(s_angle);
+    auto at = [&](float x, float y, ImVec2 off = ImVec2(0.f, 0.f)) {
+        return ImVec2(c.x + x * ca - y * sa + off.x, c.y + x * sa + y * ca + off.y);
+    };
+
+    // The poles, between the legs' tips, magnetise the tube where they are.
+    if (s_held) {
+        const ImVec2 pole = at(0.f, h * 0.5f);
+        Degauss::Magnetise(pole.x / display.x, pole.y / display.y, display.x / display.y, io.DeltaTime);
+    }
+
+    // A red horseshoe with steel tips — in the magnet's window, so the cursor
+    // and tooltips go over it.  Unclipped: the window lags the drag by a frame.
+    if (!dl) { ImGui::End(); ImGui::PopStyleVar(2); return; }
+    dl->PushClipRectFullScreen();
+    const float t      = w * 0.3f;               // leg thickness
+    const float r      = (w - t) * 0.5f;         // arch radius, to the leg centres
+    const float tipH   = t * 0.9f;
+    const float archY  = -h * 0.5f + w * 0.5f;   // arch centre
+    const float legEnd = h * 0.5f - tipH;
+    auto horseshoe = [&](ImVec2 off, float radius, ImU32 col, float thick) {
+        dl->PathLineTo(at(-radius, legEnd, off));
+        for (int i = 0; i <= 20; i++) {
+            const float a = 3.14159265f * (1.f + i / 20.f);
+            dl->PathLineTo(at(std::cos(a) * radius, archY + std::sin(a) * radius, off));
+        }
+        dl->PathLineTo(at(radius, legEnd, off));
+        dl->PathStroke(col, ImDrawFlags_None, thick);
+    };
+    const float lift = s_held ? Sc(6.f) : Sc(2.f);   // picked up: the shadow drops away
+    horseshoe(ImVec2(lift, lift * 1.4f), r, IM_COL32(0, 0, 0, 90), t);
+    horseshoe(ImVec2(0.f, 0.f), r, IM_COL32(200, 28, 34, 255), t);
+    horseshoe(ImVec2(0.f, 0.f), r + t * 0.22f, IM_COL32(255, 125, 115, 150), t * 0.18f);
+    for (float side : { -1.f, 1.f }) {
+        const float x0 = side * r - t * 0.5f, x1 = side * r + t * 0.5f, y1 = h * 0.5f;
+        dl->AddQuadFilled(at(x0, legEnd), at(x1, legEnd), at(x1, y1), at(x0, y1), IM_COL32(196, 202, 212, 255));
+        dl->AddQuadFilled(at(x0, legEnd), at(x1, legEnd), at(x1, legEnd + tipH * 0.3f), at(x0, legEnd + tipH * 0.3f),
+                          IM_COL32(240, 243, 248, 255));
+        dl->AddQuad(at(x0, legEnd), at(x1, legEnd), at(x1, y1), at(x0, y1), IM_COL32(110, 115, 125, 255));
+    }
+    dl->PopClipRect();
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+}
+
+// ---------------------------------------------------------------------------
 // CRT OSD layout — centred panel, TV-menu look
 // ---------------------------------------------------------------------------
 static SettingsPanel::DrawResult DrawOSD(CRTSettings& s,
@@ -856,6 +986,15 @@ static SettingsPanel::DrawResult DrawOSD(CRTSettings& s,
         ImGui::TextColored(kDim, "%s", hint);
     }
     ImGui::Spacing();
+    {
+        const float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        if (ImGui::Button("[ DEGAUSS ]", ImVec2(bw, 0.f))) Degauss::Start(s.degaussSound);
+        Tip("Demagnetises the tube, clearing any colour blotches.\n"
+            "Give it a few seconds between goes - the coil needs to cool down.");
+        ImGui::SameLine();
+        ImGui::Checkbox("Sound##degauss", &s.degaussSound);
+        Tip("Play the degaussing coil's hum.");
+    }
     {
         const float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
         if (ImGui::Button("[ CLOSE ]", ImVec2(bw, 0.f))) s.menuVisible = false;
@@ -1033,6 +1172,7 @@ static void DrawSectionContent(
     case kMenuSection:
         DrawStyleCombo(s);
         DrawMenuSizeControls(s);
+        DrawDegaussControls(s);
         DrawAppInfo(s, result, true);
         break;
     }
@@ -1522,6 +1662,7 @@ static SettingsPanel::DrawResult DrawDefault(CRTSettings& s,
     if (ImGui::CollapsingHeader("Menu & App", ImGuiTreeNodeFlags_DefaultOpen)) {
         DrawStyleCombo(s);
         DrawMenuSizeControls(s);
+        DrawDegaussControls(s);
         DrawAppInfo(s, result, true);
     }
 
@@ -1922,6 +2063,7 @@ static SettingsPanel::DrawResult DrawPagedMenu(PagedMenuStyle& st, const char* w
             ImGui::PushItemWidth(-SliderLabelColumn());
             DrawMenuSizeControls(s);
             ImGui::PopItemWidth();
+            DrawDegaussControls(s);
             DrawAppInfo(s, result, false);
         } else {
             ImGui::PushItemWidth(-SliderLabelColumn());
@@ -5860,6 +6002,7 @@ SettingsPanel::DrawResult SettingsPanel::Draw(CRTSettings& s,
         }
         default: result = DrawOSD       (s, monitors, selectedMon, secondaryMons, streamOpen, presets, audioDevices); break;
     }
+    DrawFridgeMagnet(s);
     DrawQuitConfirm(s.menuStyle);
     DrawPatchNotes(s.menuStyle);
     DrawInstallPrompt(s.menuStyle, result);
