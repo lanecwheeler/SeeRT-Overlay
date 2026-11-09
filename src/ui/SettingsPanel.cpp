@@ -495,10 +495,24 @@ static void DrawCustomCursorControls(CRTSettings& s, SettingsPanel::DrawResult& 
     if (!s_cursorInfo) return;
     const auto& ci = *s_cursorInfo;
 
+    static const char* kPointerNames[] = { "Windows pointer", "SeeRT arrow", "Custom image" };
+    ImGui::Combo("Pointer##cur", &s.cursorSource, kPointerNames, 3);
+    Tip("Windows pointer - your own Windows cursors (Settings > Mouse pointer), animated ones\n"
+        "and all: the I-beam over text, the hand over links, resize arrows, the busy spinner.\n"
+        "SeeRT arrow - the built-in CRT arrow.\n"
+        "Custom image - a picture of your choice.");
+    if (s.cursorSource == 0 && !ci.windowsAvailable)
+        ImGui::TextColored(kRedA, "Couldn't load your Windows cursors - showing the SeeRT arrow.");
+    if (s.cursorSource != 2) {
+        ImGui::Checkbox("Show click point##cur", &s.cursorShowHotspot);
+        Tip("Draws a small dot exactly where clicks land.");
+        return;
+    }
+
     if (ci.custom)
         ImGui::Text("Image: %s", ci.name.c_str());
     else
-        ImGui::TextUnformatted("Image: built-in");
+        ImGui::TextUnformatted("Image: none chosen yet");
 
     const bool configured = !ci.name.empty();
     const float spacing   = ImGui::GetStyle().ItemSpacing.x;
@@ -511,9 +525,9 @@ static void DrawCustomCursorControls(CRTSettings& s, SettingsPanel::DrawResult& 
         "It is scaled to match the built-in cursor; use Size to adjust.");
     if (configured) {
         ImGui::SameLine();
-        if (ImGui::Button("Use default##cur", ImVec2(-1.f, 0.f)))
+        if (ImGui::Button("Remove image##cur", ImVec2(-1.f, 0.f)))
             result.clearCustomCursor = true;
-        Tip("Go back to the built-in cursor.");
+        Tip("Forget the image and go back to your Windows pointer.");
     }
 
     if (!ci.error.empty())

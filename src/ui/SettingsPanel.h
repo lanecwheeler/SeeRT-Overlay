@@ -13,6 +13,7 @@ public:
     // Custom cursor state shown in the Cursor section.
     struct CursorInfo {
         bool        custom = false;  // a custom image is loaded and active
+        bool        windowsAvailable = false;   // the Windows pointer scheme loaded
         std::string name;            // configured custom image's file name (UTF-8), if any
         std::string error;           // last load/import failure, empty if none
         int         texW = 0;        // active cursor image size (hotspot slider range)

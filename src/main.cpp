@@ -137,6 +137,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         if (g_app) g_app->OnUpdateReady();
         return 0;
 
+    // The user changed their pointer scheme or size.
+    case WM_SETTINGCHANGE:
+        if (g_app && wParam == SPI_SETCURSORS) g_app->OnCursorSchemeChanged();
+        return 0;
+
     case WM_SHOW_RUNNING:
         if (g_app && !g_app->IsMenuOpen()) g_app->ToggleMenu();
         return 0;

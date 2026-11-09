@@ -43,21 +43,34 @@
 #endif
 
 // ---------------------------------------------------------------------------
-// HideSystemCursors — replaces the four most common system cursor images with
-// a 32×32 fully-transparent cursor so no system cursor is visible anywhere.
+// HideSystemCursors — replaces the given system cursor images (OCR_ ids) with
+// a 32×32 fully-transparent cursor so they're invisible everywhere.  Each
+// system cursor keeps its handle, so GetCursorInfo still says which is up.
 // Call SystemParametersInfo(SPI_SETCURSORS, 0, nullptr, 0) to restore.
 // ---------------------------------------------------------------------------
-static void HideSystemCursors() {
+static void HideSystemCursors(const std::vector<int>& ids) {
     BYTE andMask[128], xorMask[128];
     memset(andMask, 0xFF, sizeof(andMask));
     memset(xorMask, 0x00, sizeof(xorMask));
-    auto blankCursor = [&]() {
-        return CreateCursor(GetModuleHandleW(nullptr), 0, 0, 32, 32, andMask, xorMask);
-    };
-    SetSystemCursor(blankCursor(), OCR_NORMAL);
-    SetSystemCursor(blankCursor(), OCR_HAND);
-    SetSystemCursor(blankCursor(), OCR_IBEAM);
-    SetSystemCursor(blankCursor(), OCR_SIZEALL);
+    for (int id : ids)
+        SetSystemCursor(CreateCursor(GetModuleHandleW(nullptr), 0, 0, 32, 32, andMask, xorMask), id);
+}
+
+// The system cursor matching the one ImGui wants over the menus.
+static int CursorIdForImGui(ImGuiMouseCursor c) {
+    switch (c) {
+        case ImGuiMouseCursor_TextInput:  return OCR_IBEAM;
+        case ImGuiMouseCursor_ResizeAll:  return OCR_SIZEALL;
+        case ImGuiMouseCursor_ResizeNS:   return OCR_SIZENS;
+        case ImGuiMouseCursor_ResizeEW:   return OCR_SIZEWE;
+        case ImGuiMouseCursor_ResizeNESW: return OCR_SIZENESW;
+        case ImGuiMouseCursor_ResizeNWSE: return OCR_SIZENWSE;
+        case ImGuiMouseCursor_Hand:       return OCR_HAND;
+        case ImGuiMouseCursor_Wait:       return OCR_WAIT;
+        case ImGuiMouseCursor_Progress:   return OCR_APPSTARTING;
+        case ImGuiMouseCursor_NotAllowed: return OCR_NO;
+        default:                          return OCR_NORMAL;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -987,10 +1000,13 @@ bool App::Init(HWND hwnd) {
 
     InitImGui(hwnd);
 
-    // Hide the system cursor globally.  SetSystemCursor affects all processes so
+    // Copy the user's pointer scheme while it's still showing, then hide the
+    // system cursor globally.  SetSystemCursor affects all processes so
     // games / the desktop cannot fight it back.  Restored in Shutdown().
-    HideSystemCursors();
-    m_cursorHidden = true;
+    // (Restore first, in case a previous run was killed with them blanked.)
+    SystemParametersInfo(SPI_SETCURSORS, 0, nullptr, 0);
+    m_systemCursors.Load(m_device.Get(), SystemCursors::SchemeSize());
+    HideCursors();
 
     ReloadCursor();
     CreateHotspotMarker();
@@ -1466,8 +1482,9 @@ void App::ReloadCursor() {
     m_cursorTexH         = builtin.h;
     m_customCursorActive = false;
     m_cursorError.clear();
+    m_loadedCursorSource = m_settings.cursorSource;
 
-    if (m_settings.customCursorPath.empty()) return;
+    if (m_settings.cursorSource != 2 || m_settings.customCursorPath.empty()) return;
 
     CursorImage custom;
     if (LoadCursorImage(m_device.Get(), PathFromUtf8(m_settings.customCursorPath), custom, error)) {
@@ -1478,6 +1495,61 @@ void App::ReloadCursor() {
     } else {
         m_cursorError = error;
     }
+}
+
+// Blanks the system cursors: every one when drawing the user's Windows
+// cursors (so each shows through the filter), else the four the built-in or
+// custom image stands in for — the rest stay Windows' own.
+void App::HideCursors() {
+    static const std::vector<int> kCommon = { OCR_NORMAL, OCR_HAND, OCR_IBEAM, OCR_SIZEALL };
+    m_hiddenAllCursors = UsingWindowsCursors();
+    HideSystemCursors(m_hiddenAllCursors ? SystemCursors::Ids() : kCommon);
+    m_cursorHidden = true;
+}
+
+// The pointer scheme changed (Settings > Mouse pointer).  Windows has already
+// put its cursors back; copy the new ones and blank them again.
+void App::OnCursorSchemeChanged() {
+    const bool wasHidden = m_cursorHidden;
+    SystemParametersInfo(SPI_SETCURSORS, 0, nullptr, 0);
+    m_systemCursors.Load(m_device.Get(), SystemCursors::SchemeSize());
+    if (wasHidden) HideCursors();
+}
+
+// Which cursor image to draw this frame — call inside the ImGui frame.
+App::CursorNow App::ActiveCursor() const {
+    CursorNow c;
+    if (!UsingWindowsCursors()) {
+        c.srv   = m_cursorSRV.Get();
+        c.w     = m_cursorTexW;
+        c.h     = m_cursorTexH;
+        c.hot   = CursorHotspot();
+        c.scale = CursorDrawScale();
+        return c;
+    }
+    // Windows is showing its own cursor here (taskbar, another monitor).
+    if (!m_cursorHidden) { c.visible = false; return c; }
+
+    // Over our own windows the menus pick the cursor; elsewhere it's whichever
+    // one the app underneath set — hidden if it hid it, Windows' own if it's
+    // a private cursor we didn't blank.
+    const SystemCursors::Frame* f = nullptr;
+    const bool overUs = m_settings.menuVisible ||
+        !(GetWindowLongPtrW(m_outputHwnd, GWL_EXSTYLE) & WS_EX_TRANSPARENT);
+    if (overUs) {
+        f = m_systemCursors.ForId(CursorIdForImGui(ImGui::GetMouseCursor()), m_settings.time);
+    } else {
+        CURSORINFO ci = { sizeof(ci) };
+        if (GetCursorInfo(&ci) && (ci.flags & CURSOR_SHOWING))
+            f = m_systemCursors.ForHandle(ci.hCursor, m_settings.time);
+    }
+    if (!f) { c.visible = false; return c; }
+    c.srv   = f->srv.Get();
+    c.w     = f->w;
+    c.h     = f->h;
+    c.hot   = ImVec2(f->hotX, f->hotY);
+    c.scale = m_settings.cursorScale / CRTSettings{}.cursorScale;   // default Size = Windows' own size
+    return c;
 }
 
 // Builds the click-point marker: a small anti-aliased red dot with a dark
@@ -1656,6 +1728,7 @@ void App::ImportCustomCursor(const std::filesystem::path& src) {
     // top-left corner (where an arrow's tip usually is) — adjustable in the UI.
     m_settings.customCursorHotX = img.hasHotspot ? img.hotX : 0;
     m_settings.customCursorHotY = img.hasHotspot ? img.hotY : 0;
+    m_settings.cursorSource     = 2;
     ReloadCursor();
     Settings::Save(m_settingsPath, m_settings);
 }
@@ -1671,6 +1744,7 @@ void App::ClearCustomCursor() {
     m_settings.customCursorPath.clear();
     m_settings.customCursorHotX = 0;
     m_settings.customCursorHotY = 0;
+    if (m_settings.cursorSource == 2) m_settings.cursorSource = 0;
     ReloadCursor();
     Settings::Save(m_settingsPath, m_settings);
 }
@@ -1857,6 +1931,15 @@ void App::MakeChildrenTransparent() {
 void App::Tick() {
     if (m_overlayPaused) return;
 
+    // The cursor source changed in the menu.
+    if (m_settings.cursorSource != m_loadedCursorSource) {
+        ReloadCursor();
+        if (m_cursorHidden && m_hiddenAllCursors != UsingWindowsCursors()) {
+            SystemParametersInfo(SPI_SETCURSORS, 0, nullptr, 0);
+            HideCursors();
+        }
+    }
+
     // Deferred from the settings panel so the dialog's modal loop never runs
     // in the middle of an ImGui frame.
     if (m_pendingCursorPick) {
@@ -1906,6 +1989,7 @@ void App::Tick() {
 
             SettingsPanel::CursorInfo cursorInfo;
             cursorInfo.custom = m_customCursorActive;
+            cursorInfo.windowsAvailable = m_systemCursors.Loaded();
             cursorInfo.texW   = m_cursorTexW;
             cursorInfo.texH   = m_cursorTexH;
             cursorInfo.error  = m_cursorError;
@@ -2184,9 +2268,11 @@ void App::Tick() {
         // Virtual cursor — system cursor is globally blanked in Init(), so this
         // is the only cursor the user sees.  cursorAutoHide lets them opt into
         // hiding it when the menu is closed (shake still reveals it briefly).
-        const bool showCursor = !m_settings.cursorAutoHide
-                             || m_settings.menuVisible
-                             || m_cursorShowTimer > 0.f;
+        m_cursorNow = ActiveCursor();
+        const bool showCursor = m_cursorNow.visible
+                             && (!m_settings.cursorAutoHide
+                                 || m_settings.menuVisible
+                                 || m_cursorShowTimer > 0.f);
         if (showCursor)
         {
             // Drawn in a click-through window kept in front of the menus and
@@ -2212,14 +2298,14 @@ void App::Tick() {
                     static_cast<int>(b * 255.f + 0.5f),
                     255);
             };
-            const bool useImage = m_cursorSRV && !cs.cursorPlain;
+            const bool useImage = m_cursorNow.srv && !cs.cursorPlain;
             DrawVirtualCursor(
                 cursorDL,
                 ImVec2(m_rawCursorX, m_rawCursorY),   // raw position → barrel-distorted by CRT
-                (ImTextureID)(useImage ? (void*)m_cursorSRV.Get() : nullptr),
-                m_cursorTexW, m_cursorTexH,
-                CursorHotspot(),
-                useImage ? CursorDrawScale() : cs.cursorScale,
+                (ImTextureID)(useImage ? (void*)m_cursorNow.srv : nullptr),
+                m_cursorNow.w, m_cursorNow.h,
+                m_cursorNow.hot,
+                useImage ? m_cursorNow.scale : cs.cursorScale,
                 cs.cursorThickness,
                 toU32(cs.cursorR, cs.cursorG, cs.cursorB),
                 cs.cursorStroke);
@@ -2282,13 +2368,11 @@ void App::Tick() {
         ShowToast(*shot ? "Screenshot saved to Pictures\\SeeRT" : "Couldn't save the screenshot");
 
     // Cursor state for secondary overlays — same visibility rules as primary.
-    const bool showSecondaryCursor = CanDrawSecondaryCursor() &&
+    const bool showSecondaryCursor = CanDrawSecondaryCursor() && m_cursorNow.visible && m_cursorNow.srv &&
         (!m_settings.cursorAutoHide || m_settings.menuVisible || m_cursorShowTimer > 0.f);
 
     POINT globalCursor = {};
     if (showSecondaryCursor) GetCursorPos(&globalCursor);
-    const float  cursorDrawScale = CursorDrawScale();
-    const ImVec2 cursorHot       = CursorHotspot();
 
     for (auto& s : m_secondaryOverlays) {
         auto f = s->capture.TryGetFrame();
@@ -2307,8 +2391,8 @@ void App::Tick() {
             const float x = static_cast<float>(globalCursor.x - mi.rcMonitor.left);
             const float y = static_cast<float>(globalCursor.y - mi.rcMonitor.top);
 
-            sprites[spriteCount++] = { m_cursorSRV.Get(), x, y,
-                m_cursorTexW, m_cursorTexH, cursorDrawScale, cursorHot.x, cursorHot.y };
+            sprites[spriteCount++] = { m_cursorNow.srv, x, y,
+                m_cursorNow.w, m_cursorNow.h, m_cursorNow.scale, m_cursorNow.hot.x, m_cursorNow.hot.y };
             if (m_settings.cursorShowHotspot && m_hotspotMarkerSRV) {
                 constexpr float h = kHotspotMarkerSize * 0.5f;
                 sprites[spriteCount++] = { m_hotspotMarkerSRV.Get(), x, y,
@@ -2496,7 +2580,7 @@ void App::BeginImGuiFrame() {
             }
 
             if (shouldHide != m_cursorHidden) {
-                if (shouldHide) HideSystemCursors();
+                if (shouldHide) HideCursors();
                 else SystemParametersInfo(SPI_SETCURSORS, 0, nullptr, 0);
                 m_cursorHidden = shouldHide;
             }

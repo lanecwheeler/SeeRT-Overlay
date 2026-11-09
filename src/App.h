@@ -7,6 +7,7 @@
 #include <chrono>
 #include <filesystem>
 #include "render/D3DRenderer.h"
+#include "render/SystemCursors.h"
 #include "ui/MonitorPicker.h"
 #include "ui/WindowPicker.h"
 #include "ui/SettingsPanel.h"
@@ -86,6 +87,9 @@ public:
 
     // Apply WS_EX_TRANSPARENT to any DXGI-internal windows (safety net).
     void MakeChildrenTransparent();
+
+    // The user changed their Windows pointer scheme or size: reload it.
+    void OnCursorSchemeChanged();
 
 private:
     void InitImGui(HWND hwnd);
@@ -196,9 +200,31 @@ private:
     float  CursorDrawScale() const;
     ImVec2 CursorHotspot() const;
 
+    // The user's Windows cursors, drawn through the filter (cursorSource 0).
+    SystemCursors m_systemCursors;
+    bool UsingWindowsCursors() const { return m_settings.cursorSource == 0 && m_systemCursors.Loaded(); }
+    int  m_loadedCursorSource = -1;     // cursorSource that ReloadCursor last applied
+    bool m_hiddenAllCursors   = false;  // every system cursor blanked, not just the common four
+    void HideCursors();                 // blank the system cursors for the current source
+
+    // The cursor image to draw this frame, worked out once per Tick for the
+    // primary overlay and the secondaries.  Not visible when Windows is
+    // drawing its own cursor (or hiding it, e.g. while typing).
+    struct CursorNow {
+        ID3D11ShaderResourceView* srv = nullptr;
+        int    w = 0, h = 0;
+        ImVec2 hot;
+        float  scale   = 1.f;
+        bool   visible = true;
+    };
+    CursorNow m_cursorNow;
+    CursorNow ActiveCursor() const;
+
     // Secondary overlays have no ImGui, so they can only show the image
     // cursor (as a sprite) — not the plain/fallback triangle.
-    bool CanDrawSecondaryCursor() const { return m_cursorSRV && !m_settings.cursorPlain; }
+    bool CanDrawSecondaryCursor() const {
+        return (UsingWindowsCursors() || m_cursorSRV) && !m_settings.cursorPlain;
+    }
 
     // Shake-to-show state.
     POINT m_lastMousePt      = {};   // previous frame mouse position (screen coords)

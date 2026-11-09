@@ -37,6 +37,8 @@ set(SOURCES
     src/capture/WGCCapture.h
     src/render/D3DRenderer.cpp
     src/render/D3DRenderer.h
+    src/render/SystemCursors.cpp
+    src/render/SystemCursors.h
     src/ui/WindowPicker.cpp
     src/ui/WindowPicker.h
     src/ui/MonitorPicker.cpp

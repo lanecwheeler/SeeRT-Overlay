@@ -96,6 +96,11 @@ struct CRTSettings {
     bool  cursorPlain       = false; // use fallback cursor
     bool  cursorShowHotspot = false; // draw a small dot at the exact click point
 
+    // Which cursor the overlay draws: 0 = the user's Windows pointer scheme,
+    // 1 = SeeRT's built-in arrow, 2 = the custom image below.  Like the
+    // custom image, machine-specific, so not part of presets.
+    int   cursorSource      = 0;
+
     // Custom cursor image — UTF-8 path to the user's copy in
     // %APPDATA%\SeeRT Overlay\cursors.  Empty = built-in cursor.png.
     // Machine-specific, so deliberately not part of presets.

@@ -1,4 +1,5 @@
 #include "Settings.h"
+#include <algorithm>   // std::clamp
 
 #include <nlohmann/json.hpp>
 #include <fstream>
@@ -166,6 +167,11 @@ CRTSettings Load(const fs::path& path) {
             s.customCursorHotX = j["customCursorHotX"].get<int>();
         if (j.contains("customCursorHotY") && j["customCursorHotY"].is_number_integer())
             s.customCursorHotY = j["customCursorHotY"].get<int>();
+        // Before 1.6 there was no choice: a custom image if set, else the built-in.
+        if (j.contains("cursorSource") && j["cursorSource"].is_number_integer())
+            s.cursorSource = std::clamp(j["cursorSource"].get<int>(), 0, 2);
+        else
+            s.cursorSource = s.customCursorPath.empty() ? 0 : 2;
         // menuVisible is intentionally NOT loaded — the panel always starts
         // closed so the overlay is click-through immediately on launch.
         if (j.contains("toggleX") && j["toggleX"].is_number()) s.toggleX = j["toggleX"].get<float>();
@@ -234,6 +240,7 @@ void Save(const fs::path& path, const CRTSettings& s) {
     j["customCursorPath"]     = s.customCursorPath;
     j["customCursorHotX"]     = s.customCursorHotX;
     j["customCursorHotY"]     = s.customCursorHotY;
+    j["cursorSource"]         = s.cursorSource;
     // menuVisible NOT saved — always starts closed on next launch.
     j["toggleX"]              = s.toggleX;
     j["toggleY"]              = s.toggleY;

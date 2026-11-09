@@ -71,8 +71,8 @@ After that it keeps itself up to date (see below).
 - Captures any window or monitor via Windows Graphics Capture
 - Click-through when settings panel is closed; receives input when open
 - Multi-monitor: add secondary overlays to additional monitors
-- Custom CRT cursor rendered inside the shader (barrel-distorted with the image)
-- Bring your own cursor image (PNG, CUR, ICO, BMP, GIF, JPG, TIFF) with an adjustable hotspot
+- Your own Windows cursors drawn through the filter (barrel-distorted with the image): your pointer scheme and size, the I-beam over text, the hand over links, animated cursors and all
+- Or the built-in CRT arrow, or your own cursor image (PNG, CUR, ICO, BMP, GIF, JPG, TIFF) with an adjustable hotspot
 - Shake mouse to reveal cursor and settings toggle button
 - System tray icon
 - Screenshots of the overlay as you see it (Ctrl+Shift+PrtScn or the tray menu) saved to Pictures\SeeRT — normal screen capture tools can't see the overlay
