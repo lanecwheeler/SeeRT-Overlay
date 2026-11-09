@@ -1,5 +1,10 @@
 # SeeRT Overlay patch notes
 
+## 1.6.0
+- Your own Windows cursors, through the filter: the overlay now draws your pointer scheme at your pointer size, barrel-distorted with the picture. The I-beam over text, the hand over links, resize arrows, and animated cursors like the busy spinner all show up as they should.
+- Pick the pointer in the Cursor section: Windows pointer (the new default), the SeeRT arrow, or your own image. If you already use a custom image, you keep it.
+- Changing your cursors or pointer size in Windows Settings takes effect right away, no restart needed.
+
 ## 1.5.0
 - Degauss: the button in Menu & App (or the CRT OSD footer) shakes the picture and swirls colour through it, like a real tube, with the coil's hum. Untick Sound to keep it quiet.
 - Something magnetic is peeking in from the edge of the screen. Careful with that near the TV...
